@@ -7,6 +7,7 @@ import uuid
 import shutil
 from pathlib import Path
 from typing import Optional
+import logging
 
 from services.pokemon_tcg import PokemonTCGClient
 from analysis.centering import calculate_centering_ratios
@@ -14,6 +15,13 @@ from analysis.corners import analyze_corner_wear
 from analysis.edges import analyze_edge_wear
 from analysis.surface import analyze_surface_damage
 from analysis.scoring import GradingEngine
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 # Load environment variables
 load_dotenv()
@@ -40,7 +48,8 @@ pokemon_client = PokemonTCGClient()
 @app.get("/health")
 async def health_check():
     """Health check endpoint."""
-    return {"status": "ok"}
+    logger.info("Health check called")
+    return {"status": "ok", "message": "Backend is running"}
 
 
 @app.get("/cards/search")
@@ -157,6 +166,8 @@ async def upload_card_images(
     session_dir = UPLOAD_DIR / session_id
     session_dir.mkdir(exist_ok=True)
     
+    logger.info(f"Upload started - Session ID: {session_id}")
+    
     try:
         # Save front image
         front_path = session_dir / f"front_{front_image.filename}"
@@ -178,6 +189,8 @@ async def upload_card_images(
             "results": None
         }
         
+        logger.info(f"Upload successful - Session ID: {session_id}")
+        
         return {
             "session_id": session_id,
             "status": "uploaded",
@@ -187,6 +200,7 @@ async def upload_card_images(
         
     except Exception as e:
         # Cleanup on error
+        logger.error(f"Upload failed - Session ID: {session_id}, Error: {str(e)}")
         if session_dir.exists():
             shutil.rmtree(session_dir)
         raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
@@ -204,6 +218,8 @@ async def run_analysis(session_id: str):
         Complete analysis results including centering, corners, edges, and surface grades
     """
     try:
+        logger.info(f"Analysis started - Session ID: {session_id}")
+        
         if session_id not in analysis_sessions:
             raise HTTPException(status_code=404, detail="Session not found")
         
@@ -211,23 +227,40 @@ async def run_analysis(session_id: str):
         front_path = session["front_path"]
         back_path = session.get("back_path")
         
-        # Analyze front image
-        front_results = {
-            "centering": calculate_centering_ratios(front_path),
-            "corners": analyze_corner_wear(front_path),
-            "edges": analyze_edge_wear(front_path),
-            "surface": analyze_surface_damage(front_path)
-        }
+        # Verify files exist
+        if not os.path.exists(front_path):
+            raise HTTPException(status_code=400, detail=f"Front image file not found: {front_path}")
+        if back_path and not os.path.exists(back_path):
+            raise HTTPException(status_code=400, detail=f"Back image file not found: {back_path}")
         
-        # Analyze back image if available
+        # Analyze front image with error handling
+        try:
+            front_results = {
+                "centering": calculate_centering_ratios(front_path),
+                "corners": analyze_corner_wear(front_path),
+                "edges": analyze_edge_wear(front_path),
+                "surface": analyze_surface_damage(front_path)
+            }
+        except Exception as e:
+            raise HTTPException(
+                status_code=500, 
+                detail=f"Front image analysis failed: {str(e)}"
+            )
+        
+        # Analyze back image if available with error handling
         back_results = None
         if back_path:
-            back_results = {
-                "centering": calculate_centering_ratios(back_path),
-                "corners": analyze_corner_wear(back_path),
-                "edges": analyze_edge_wear(back_path),
-                "surface": analyze_surface_damage(back_path)
-            }
+            try:
+                back_results = {
+                    "centering": calculate_centering_ratios(back_path),
+                    "corners": analyze_corner_wear(back_path),
+                    "edges": analyze_edge_wear(back_path),
+                    "surface": analyze_surface_damage(back_path)
+                }
+            except Exception as e:
+                # Log but don't fail if back analysis fails
+                print(f"Warning: Back image analysis failed: {str(e)}")
+                back_results = None
         
         # Merging Logic (Conservative Bias)
         # 1. Centering (Weighted 70/30)
@@ -269,13 +302,20 @@ async def run_analysis(session_id: str):
                 
         # Check for errors in analysis
         errors = []
-        if "error" in front_results["centering"]: errors.append(f"Centering: {front_results['centering']['error']}")
-        if "error" in front_results["corners"]: errors.append(f"Corners: {front_results['corners']['error']}")
-        if "error" in front_results["edges"]: errors.append(f"Edges: {front_results['edges']['error']}")
-        if "error" in front_results["surface"]: errors.append(f"Surface: {front_results['surface']['error']}")
+        if "error" in front_results["centering"]: 
+            errors.append(f"Centering: {front_results['centering']['error']}")
+        if "error" in front_results["corners"]: 
+            errors.append(f"Corners: {front_results['corners']['error']}")
+        if "error" in front_results["edges"]: 
+            errors.append(f"Edges: {front_results['edges']['error']}")
+        if "error" in front_results["surface"]: 
+            errors.append(f"Surface: {front_results['surface']['error']}")
         
         if errors:
-            raise HTTPException(status_code=400, detail="; ".join(errors))
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Analysis errors detected: {'; '.join(errors)}"
+            )
 
         # 4. Surface (Worst Case)
         final_surface_data = front_results["surface"]["surface"]
@@ -284,13 +324,19 @@ async def run_analysis(session_id: str):
              if back_results["surface"]["surface"]["score"] < final_surface_data["score"]:
                  final_surface_data = back_results["surface"]["surface"]
                 
-        # Calculate Final Grade
-        grading_result = GradingEngine.calculate_grade(
-            centering_score=final_centering_score,
-            corners_data=final_corners_data,
-            edges_data=final_edges_data,
-            surface_data=final_surface_data
-        )
+        # Calculate Final Grade with error handling
+        try:
+            grading_result = GradingEngine.calculate_grade(
+                centering_score=final_centering_score,
+                corners_data=final_corners_data,
+                edges_data=final_edges_data,
+                surface_data=final_surface_data
+            )
+        except Exception as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Grading calculation failed: {str(e)}"
+            )
         
         results = {
             "session_id": session_id,
@@ -303,10 +349,23 @@ async def run_analysis(session_id: str):
         session["status"] = "complete"
         session["results"] = results
         
+        logger.info(f"Analysis completed - Session ID: {session_id}, Grade: {grading_result.get('psa_estimate', 'N/A')}")
+        
         return results
         
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")
+        # Log the full error for debugging
+        import traceback
+        error_detail = f"Analysis failed: {str(e)}\n{traceback.format_exc()}"
+        logger.error(f"Analysis error - Session ID: {session_id}\n{error_detail}")
+        print(error_detail)
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Analysis failed: {str(e)}"
+        )
 
 
 @app.post("/grade")

@@ -8,10 +8,9 @@ class ApiClient {
 
   late Dio _dio;
 
-  // Production URL (Railway) - UPDATE THIS after deploying to Railway
-  // Format: https://your-app-name.up.railway.app
+  // Production URL (Railway)
   static const String _productionUrl =
-      "https://pregrader-backend.up.railway.app";
+      "https://pregrader-production.up.railway.app";
 
   // Local development URLs
   static const String _localIosUrl = "http://192.168.68.103:8000";

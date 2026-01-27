@@ -69,9 +69,39 @@ class _ReviewScreenState extends State<ReviewScreen> {
       );
     } catch (e) {
       if (mounted) {
+        // Parse error message for better display
+        String errorMessage = e.toString();
+        String displayError = "Grading Failed";
+        
+        if (errorMessage.contains("500")) {
+          displayError = "Server Error: The backend encountered an issue processing your card. Please try again.";
+        } else if (errorMessage.contains("404")) {
+          displayError = "Session not found. Please try uploading again.";
+        } else if (errorMessage.contains("timeout")) {
+          displayError = "Request timed out. Please check your connection and try again.";
+        } else if (errorMessage.contains("SocketException") || errorMessage.contains("Connection")) {
+          displayError = "Cannot connect to server. Please check your internet connection.";
+        } else {
+          displayError = "Error: $errorMessage";
+        }
+        
         setState(() {
-          _error = e.toString();
+          _error = displayError;
         });
+
+        // Show clearer error feedback
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(displayError),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 8),
+            action: SnackBarAction(
+              label: 'Retry',
+              textColor: Colors.white,
+              onPressed: _startGrading,
+            ),
+          ),
+        );
       }
     } finally {
       if (mounted) {
