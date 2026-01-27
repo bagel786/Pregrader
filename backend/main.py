@@ -266,11 +266,22 @@ async def run_analysis(session_id: str):
             if back_edge_score < front_edge_score:
                 final_edges_data = back_results["edges"]
                 
+        # Check for errors in analysis
+        errors = []
+        if "error" in front_results["centering"]: errors.append(f"Centering: {front_results['centering']['error']}")
+        if "error" in front_results["corners"]: errors.append(f"Corners: {front_results['corners']['error']}")
+        if "error" in front_results["edges"]: errors.append(f"Edges: {front_results['edges']['error']}")
+        if "error" in front_results["surface"]: errors.append(f"Surface: {front_results['surface']['error']}")
+        
+        if errors:
+            raise HTTPException(status_code=400, detail="; ".join(errors))
+
         # 4. Surface (Worst Case)
         final_surface_data = front_results["surface"]["surface"]
-        if back_results:
-            if back_results["surface"]["surface"]["score"] < final_surface_data["score"]:
-                final_surface_data = back_results["surface"]["surface"]
+        if back_results and "surface" in back_results and "surface" in back_results["surface"]:
+             # Check if back surface score is worse
+             if back_results["surface"]["surface"]["score"] < final_surface_data["score"]:
+                 final_surface_data = back_results["surface"]["surface"]
                 
         # Calculate Final Grade
         grading_result = GradingEngine.calculate_grade(
