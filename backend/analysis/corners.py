@@ -1,23 +1,6 @@
 import cv2
 import numpy as np
-
-def order_points(pts):
-    """
-    Orders coordinates in the order: top-left, top-right, bottom-right, bottom-left
-    """
-    rect = np.zeros((4, 2), dtype="float32")
-    
-    # Sum: TL is min sum, BR is max sum
-    s = pts.sum(axis=1)
-    rect[0] = pts[np.argmin(s)]
-    rect[2] = pts[np.argmax(s)]
-    
-    # Diff: TR is min diff (x-y), BL is max diff (x-y)
-    diff = np.diff(pts, axis=1)
-    rect[1] = pts[np.argmin(diff)]
-    rect[3] = pts[np.argmax(diff)]
-    
-    return rect
+from .utils import find_card_contour, order_points
 
 def analyze_corner_wear(image_path: str) -> dict:
     """
@@ -28,49 +11,31 @@ def analyze_corner_wear(image_path: str) -> dict:
         if image is None:
             return {"error": "Failed to load image"}
 
-        # 1. Find Card Contour (Similar to centering.py)
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-        edges = cv2.Canny(blurred, 50, 150)
-        contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE) # External only for outer shape
-
-        candidates = []
-        for contour in contours:
-            perimeter = cv2.arcLength(contour, True)
-            approx = cv2.approxPolyDP(contour, 0.04 * perimeter, True)
-            if len(approx) == 4:
-                rect = cv2.boundingRect(approx)
-                area = rect[2] * rect[3]
-                if area > 5000: # Slightly higher threshold
-                    candidates.append((area, approx))
-        
-        candidates.sort(key=lambda x: x[0], reverse=True)
-        
-        if not candidates:
+        result = find_card_contour(image)
+        if not result:
             return {"error": "Card not detected."}
-
-        # Largest 4-sided polygon is the card
-        _, card_approx = candidates[0]
+            
+        card_approx, _ = result
+        
+        # Force 4 points for corner extraction
+        if len(card_approx) != 4:
+            # Fallback handled in utils usually, but if not:
+            x,y,w,h = cv2.boundingRect(card_approx)
+            card_approx = np.array([[x,y], [x+w,y], [x+w,y+h], [x,y+h]], dtype="float32")
+        
         card_pts = card_approx.reshape(4, 2)
-        ordered_pts = order_points(card_pts) # TL, TR, BR, BL
+        ordered_pts = order_points(card_pts)
 
         results = {}
         corner_names = ["top_left", "top_right", "bottom_right", "bottom_left"]
         
-        total_whitening_score = 0
-        
-        # 2. Extract and Analyze Each Corner
-        # ROI Size: Dynamic based on card size? Let's use fixed 60x60 for now, 
-        # but in production should be relative to resolution (e.g. 5% of width).
         roi_size = 60 
-        
         h, w = image.shape[:2]
 
         for i, (pt_x, pt_y) in enumerate(ordered_pts):
             pt_x, pt_y = int(pt_x), int(pt_y)
             name = corner_names[i]
             
-            # Calculate crop coordinates with boundary checks
             x1 = max(0, pt_x - roi_size // 2)
             y1 = max(0, pt_y - roi_size // 2)
             x2 = min(w, pt_x + roi_size // 2)
@@ -79,49 +44,35 @@ def analyze_corner_wear(image_path: str) -> dict:
             roi = image[y1:y2, x1:x2]
             
             if roi.size == 0:
-                results[name] = {"error": "ROI empty"}
+                results[name] = {"score": 5, "whitening_pixels": 0, "note": "Error extracting ROI"}
                 continue
 
-            # 3. Whitening Detection
-            # Convert to HSV
+            # Whitening Detection
             hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
-            
-            # Define White/Grey ranges
-            # Low Saturation, High Brightness
-            lower_white = np.array([0, 0, 180])   # Very low sat, bright
-            upper_white = np.array([180, 40, 255]) # Allow slight hue, low sat, max brightness
+            lower_white = np.array([0, 0, 180])
+            upper_white = np.array([180, 40, 255])
             
             mask = cv2.inRange(hsv, lower_white, upper_white)
-            
-            # Count white pixels
             white_pixels = cv2.countNonZero(mask)
             
-            # Score (10 = Perfect, 1 = Ruined)
-            # Thresholds need tuning.
-            # 0-10 pixels: 10
-            # 10-50 pixels: 9
-            # 50-100 pixels: 8
-            # ...
-            score = 10
-            if white_pixels > 10: score = 9
-            if white_pixels > 50: score = 8
-            if white_pixels > 120: score = 7
-            if white_pixels > 200: score = 6
-            if white_pixels > 300: score = 5
-            
-            total_whitening_score += score
+            # Scoring per Spec
+            score = 10.0
+            if white_pixels <= 5: score = 10.0
+            elif white_pixels <= 20: score = 9.5
+            elif white_pixels <= 50: score = 9.0
+            elif white_pixels <= 100: score = 8.5
+            elif white_pixels <= 200: score = 8.0
+            elif white_pixels <= 400: score = 7.0 # Rounded/Damaged
+            else: score = 5.0 # Severe
             
             results[name] = {
                 "score": score,
                 "whitening_pixels": white_pixels,
-                # "debug_roi_center": (pt_x, pt_y)
             }
             
-        final_grade = round(total_whitening_score / 4.0, 1)
-
+        # Overall grade calculated in grading_system.py, but we return the raw data
         return {
-            "corners": results,
-            "overall_corner_grade": final_grade
+            "corners": results
         }
 
     except Exception as e:
@@ -129,7 +80,6 @@ def analyze_corner_wear(image_path: str) -> dict:
 
 if __name__ == "__main__":
     import sys
+    import json
     if len(sys.argv) > 1:
-        print(analyze_corner_wear(sys.argv[1]))
-    else:
-        print("Usage: python corners.py <image_path>")
+        print(json.dumps(analyze_corner_wear(sys.argv[1]), indent=2))

@@ -1,12 +1,14 @@
-import 'dart:io';
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import '../services/camera_service.dart';
 import '../widgets/camera_overlay.dart';
 import '../core/utils/image_validator.dart';
+import 'review_screen.dart';
 
 class CameraCaptureScreen extends StatefulWidget {
-  const CameraCaptureScreen({super.key});
+  final bool isReturningResult;
+
+  const CameraCaptureScreen({super.key, this.isReturningResult = false});
 
   @override
   State<CameraCaptureScreen> createState() => _CameraCaptureScreenState();
@@ -57,11 +59,17 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen> {
       if (!mounted) return;
 
       if (validation['isValid'] == true) {
-        // Success: Show preview or navigate (for now just snackbar)
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Card Captured Successfully!')),
-        );
-        // TODO: Navigate to crop/confirm screen
+        if (mounted) {
+          if (widget.isReturningResult) {
+            Navigator.of(context).pop(image);
+          } else {
+            Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => ReviewScreen(frontImage: image),
+              ),
+            );
+          }
+        }
       } else {
         if (!mounted) return;
         final issues = (validation['issues'] as List).join("\n");

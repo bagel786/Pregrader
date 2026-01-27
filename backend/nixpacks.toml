@@ -1,0 +1,11 @@
+# Nixpacks configuration for Railway
+# OpenCV requires additional system libraries
+
+[phases.setup]
+nixPkgs = ["python311", "gcc", "libGL", "glib", "mesa"]
+
+[phases.install]
+cmds = ["pip install --upgrade pip", "pip install -r requirements.txt"]
+
+[start]
+cmd = "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"

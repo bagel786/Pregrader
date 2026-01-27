@@ -1,7 +1,5 @@
 import 'package:flutter/material.dart';
-import '../widgets/pokeball_widget.dart';
 import '../core/routes/app_routes.dart';
-import '../services/pokemon_service.dart';
 
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
@@ -9,62 +7,36 @@ class HomeScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.white,
+      appBar: AppBar(title: const Text('Pokemon Pregrader'), centerTitle: true),
       body: Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Spacer(),
-            PokeballWidget(
-              size: 200,
-              onTap: () {
-                Navigator.of(context).pushNamed(AppRoutes.cameraCapture);
-              },
-            ),
+            const Icon(Icons.catching_pokemon, size: 100, color: Colors.red),
             const SizedBox(height: 32),
-            OutlinedButton(
-              onPressed: () async {
-                try {
-                  final service = PokemonService();
-                  final result = await service.searchCards('charizard');
-                  print('Search Result: ${result['totalCount']} cards found');
-                  if (context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text(
-                          'Success! Found ${result['totalCount']} "Charizard" cards',
-                        ),
-                      ),
-                    );
-                  }
-                } catch (e) {
-                  print('Error: $e');
-                  if (context.mounted) {
-                    ScaffoldMessenger.of(
-                      context,
-                    ).showSnackBar(SnackBar(content: Text('Error: $e')));
-                  }
-                }
-              },
-              child: const Text('Test Backend Connection'),
+            const Text(
+              'Grade Your Pokemon Cards',
+              style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 16),
-            Text(
-              'Tap to Start',
-              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                color: Colors.grey[600],
-                fontWeight: FontWeight.w300,
-                letterSpacing: 1.5,
-              ),
+            const Text(
+              'Take a photo of your card to get\nan instant pre-grade assessment',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 16, color: Colors.grey),
             ),
-            const Spacer(),
-            Padding(
-              padding: const EdgeInsets.only(bottom: 32.0),
-              child: Text(
-                'Pokemon Pregrader',
-                style: Theme.of(
-                  context,
-                ).textTheme.bodySmall?.copyWith(color: Colors.grey[400]),
+            const SizedBox(height: 48),
+            ElevatedButton.icon(
+              onPressed: () {
+                Navigator.pushNamed(context, AppRoutes.cameraCapture);
+              },
+              icon: const Icon(Icons.camera_alt),
+              label: const Text('Scan Card'),
+              style: ElevatedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 32,
+                  vertical: 16,
+                ),
+                textStyle: const TextStyle(fontSize: 18),
               ),
             ),
           ],
