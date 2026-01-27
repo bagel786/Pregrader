@@ -203,14 +203,14 @@ async def run_analysis(session_id: str):
     Returns:
         Complete analysis results including centering, corners, edges, and surface grades
     """
-    if session_id not in analysis_sessions:
-        raise HTTPException(status_code=404, detail="Session not found")
-    
-    session = analysis_sessions[session_id]
-    front_path = session["front_path"]
-    back_path = session.get("back_path")
-    
     try:
+        if session_id not in analysis_sessions:
+            raise HTTPException(status_code=404, detail="Session not found")
+        
+        session = analysis_sessions[session_id]
+        front_path = session["front_path"]
+        back_path = session.get("back_path")
+        
         # Analyze front image
         front_results = {
             "centering": calculate_centering_ratios(front_path),
@@ -223,6 +223,7 @@ async def run_analysis(session_id: str):
         back_results = None
         if back_path:
             back_results = {
+                "centering": calculate_centering_ratios(back_path),
                 "corners": analyze_corner_wear(back_path),
                 "edges": analyze_edge_wear(back_path),
                 "surface": analyze_surface_damage(back_path)
