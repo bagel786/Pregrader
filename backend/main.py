@@ -250,7 +250,7 @@ async def run_analysis(session_id: str):
         
         # 2. Corners (Worst Case)
         final_corners_data = front_results["corners"]
-        if back_results:
+        if back_results and "corners" in back_results and "corners" in back_results["corners"]:
             # If back corners are worse (lower score), use them
             back_score = sum(c["score"] for c in back_results["corners"]["corners"].values())
             front_score = sum(c["score"] for c in front_results["corners"]["corners"].values())
@@ -259,7 +259,7 @@ async def run_analysis(session_id: str):
                 
         # 3. Edges (Worst Case)
         final_edges_data = front_results["edges"]
-        if back_results:
+        if back_results and "edges" in back_results and "edges" in back_results["edges"]:
             # Edges usually show wear on back more clearly
             back_edge_score = sum(e["score"] for e in back_results["edges"]["edges"].values())
             front_edge_score = sum(e["score"] for e in front_results["edges"]["edges"].values())
