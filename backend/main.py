@@ -262,6 +262,23 @@ async def run_analysis(session_id: str):
                 print(f"Warning: Back image analysis failed: {str(e)}")
                 back_results = None
         
+        # Check for errors in analysis FIRST before using the data
+        errors = []
+        if "error" in front_results["centering"]: 
+            errors.append(f"Centering: {front_results['centering']['error']}")
+        if "error" in front_results["corners"]: 
+            errors.append(f"Corners: {front_results['corners']['error']}")
+        if "error" in front_results["edges"]: 
+            errors.append(f"Edges: {front_results['edges']['error']}")
+        if "error" in front_results["surface"]: 
+            errors.append(f"Surface: {front_results['surface']['error']}")
+        
+        if errors:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Analysis errors detected: {'; '.join(errors)}"
+            )
+        
         # Merging Logic (Conservative Bias)
         # 1. Centering (Weighted 70/30)
         front_centering = front_results["centering"].get("grade_estimate", 0)
@@ -299,23 +316,6 @@ async def run_analysis(session_id: str):
             front_edge_score = sum(e["score"] for e in front_results["edges"]["edges"].values())
             if back_edge_score < front_edge_score:
                 final_edges_data = back_results["edges"]
-                
-        # Check for errors in analysis
-        errors = []
-        if "error" in front_results["centering"]: 
-            errors.append(f"Centering: {front_results['centering']['error']}")
-        if "error" in front_results["corners"]: 
-            errors.append(f"Corners: {front_results['corners']['error']}")
-        if "error" in front_results["edges"]: 
-            errors.append(f"Edges: {front_results['edges']['error']}")
-        if "error" in front_results["surface"]: 
-            errors.append(f"Surface: {front_results['surface']['error']}")
-        
-        if errors:
-            raise HTTPException(
-                status_code=400, 
-                detail=f"Analysis errors detected: {'; '.join(errors)}"
-            )
 
         # 4. Surface (Worst Case)
         final_surface_data = front_results["surface"]["surface"]
