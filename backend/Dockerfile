@@ -30,15 +30,11 @@ RUN python startup_check.py || echo "Warning: Startup check had issues"
 # Create temp directory
 RUN mkdir -p temp_uploads && chmod 777 temp_uploads
 
-# Default port
+# Default port (Railway will override this)
 ENV PORT=8000
 
 # Expose port
 EXPOSE 8000
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-  CMD python -c "import requests; requests.get('http://localhost:8000/health')" || exit 1
-
-# Use ENTRYPOINT with shell to ensure variable expansion
-ENTRYPOINT ["/bin/sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT}"]
+# Use CMD instead of ENTRYPOINT for Railway compatibility
+CMD uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}
