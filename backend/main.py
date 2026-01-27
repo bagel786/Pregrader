@@ -232,7 +232,7 @@ async def run_analysis(session_id: str):
         # 1. Centering (Weighted 70/30)
         front_centering = front_results["centering"].get("grade_estimate", 0)
         back_centering = 0
-        if back_results and "grade_estimate" in back_results["centering"]:
+        if back_results and "centering" in back_results and "grade_estimate" in back_results["centering"]:
              # Note: We didn't run centering on back in the original code, 
              # but spec says "Back centering weighted 30%".
              # For now, if we don't have back centering, assume it matches front or ignore?
