@@ -269,20 +269,31 @@ async def run_analysis(session_id: str):
         
         # Check for errors in analysis FIRST before using the data
         errors = []
-        if "error" in front_results["centering"]: 
-            errors.append(f"Centering: {front_results['centering']['error']}")
-        if "error" in front_results["corners"]: 
-            errors.append(f"Corners: {front_results['corners']['error']}")
-        if "error" in front_results["edges"]: 
-            errors.append(f"Edges: {front_results['edges']['error']}")
-        if "error" in front_results["surface"]: 
-            errors.append(f"Surface: {front_results['surface']['error']}")
+        critical_errors = []
         
-        if errors:
+        # Centering errors are non-critical - we can use a default
+        if "error" in front_results["centering"]:
+            errors.append(f"Centering: {front_results['centering']['error']}")
+            # Use conservative default if centering fails
+            front_results["centering"]["grade_estimate"] = 8.0
+        
+        # These are critical - can't grade without them
+        if "error" in front_results["corners"]: 
+            critical_errors.append(f"Corners: {front_results['corners']['error']}")
+        if "error" in front_results["edges"]: 
+            critical_errors.append(f"Edges: {front_results['edges']['error']}")
+        if "error" in front_results["surface"]: 
+            critical_errors.append(f"Surface: {front_results['surface']['error']}")
+        
+        if critical_errors:
             raise HTTPException(
                 status_code=400, 
-                detail=f"Analysis errors detected: {'; '.join(errors)}"
+                detail=f"Critical analysis errors: {'; '.join(critical_errors)}. Please retake photos with better lighting and card positioning."
             )
+        
+        # Log non-critical warnings
+        if errors:
+            logger.warning(f"Non-critical analysis warnings - Session ID: {session_id}: {'; '.join(errors)}")
         
         # Merging Logic (Conservative Bias)
         # 1. Centering (Weighted 70/30)
