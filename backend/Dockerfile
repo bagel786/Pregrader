@@ -1,6 +1,6 @@
 FROM python:3.11-slim
 
-# Install system dependencies for OpenCV (updated package names for Debian Trixie)
+# Install system dependencies for OpenCV
 RUN apt-get update && apt-get install -y \
     libgl1 \
     libglib2.0-0 \
@@ -22,11 +22,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY . .
 
-# Default port (Railway will override via PORT env var)
+# Default port
 ENV PORT=8000
 
 # Expose port
 EXPOSE 8000
 
-# Start command - using shell form for proper variable expansion
-CMD uvicorn main:app --host 0.0.0.0 --port $PORT
+# Use ENTRYPOINT with shell to ensure variable expansion
+ENTRYPOINT ["/bin/sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT}"]
