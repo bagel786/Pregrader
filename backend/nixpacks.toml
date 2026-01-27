@@ -2,10 +2,13 @@
 # OpenCV requires additional system libraries
 
 [phases.setup]
-nixPkgs = ["python311", "gcc", "libGL", "glib", "mesa"]
+nixPkgs = ["python311", "python311Packages.pip", "gcc", "stdenv.cc.cc.lib"]
 
 [phases.install]
-cmds = ["pip install --upgrade pip", "pip install -r requirements.txt"]
+cmds = ["python3 -m pip install --upgrade pip", "python3 -m pip install -r requirements.txt"]
 
 [start]
-cmd = "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"
+cmd = "python3 -m uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"
+
+[variables]
+LD_LIBRARY_PATH = "/usr/lib/x86_64-linux-gnu:/lib/x86_64-linux-gnu"
