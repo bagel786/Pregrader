@@ -84,7 +84,7 @@ def find_card_contour(image, min_area_threshold=2000):
         # Or better: MinAreaRect (rotated rectangle)
         rect_rotated = cv2.minAreaRect(best["contour"])
         box = cv2.boxPoints(rect_rotated)
-        box = np.int0(box)
+        box = box.astype(int)  # Convert to integer coordinates (NumPy 2.0+ compatible)
         best["approx"] = box
     
     return best["approx"], best["rect"]
