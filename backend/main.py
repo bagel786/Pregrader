@@ -49,7 +49,12 @@ pokemon_client = PokemonTCGClient()
 async def health_check():
     """Health check endpoint."""
     logger.info("Health check called")
-    return {"status": "ok", "message": "Backend is running"}
+    return {
+        "status": "ok", 
+        "message": "Backend is running",
+        "version": "2.0.1",  # Updated version to verify deployment
+        "timestamp": "2026-01-27T15:35:00Z"
+    }
 
 
 @app.get("/cards/search")
@@ -353,9 +358,10 @@ async def run_analysis(session_id: str):
         
         return results
         
-    except HTTPException:
-        # Re-raise HTTP exceptions
-        raise
+    except HTTPException as http_exc:
+        # Re-raise HTTP exceptions without modification
+        logger.warning(f"HTTP Exception in analysis - Session ID: {session_id}, Status: {http_exc.status_code}, Detail: {http_exc.detail}")
+        raise http_exc
     except Exception as e:
         # Log the full error for debugging
         import traceback
