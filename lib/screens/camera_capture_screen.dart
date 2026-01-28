@@ -150,57 +150,64 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen> {
 
       if (image == null) return null;
 
-      // Calculate the frame dimensions (same as overlay)
-      // Standard card aspect ratio: 2.5/3.5 = ~0.714
-      // Frame is 85% of screen width
+      // Get screen dimensions
       final screenWidth = MediaQuery.of(context).size.width;
       final screenHeight = MediaQuery.of(context).size.height;
       
-      // Get the actual image dimensions
+      // Calculate frame dimensions (same as overlay)
+      final frameWidthOnScreen = screenWidth * 0.85;
+      final frameHeightOnScreen = frameWidthOnScreen / 0.714;
+      
+      // Get image dimensions
       final imageWidth = image.width;
       final imageHeight = image.height;
       
-      // Calculate the frame size relative to the image
-      // The camera preview might be scaled, so we need to account for that
-      final previewAspectRatio = imageWidth / imageHeight;
+      // Calculate scaling factors
+      // The camera preview is scaled to fit the screen while maintaining aspect ratio
+      final imageAspectRatio = imageWidth / imageHeight;
       final screenAspectRatio = screenWidth / screenHeight;
       
-      double frameWidthInImage;
-      double frameHeightInImage;
-      double offsetX;
-      double offsetY;
+      double scaleX, scaleY;
+      double offsetX = 0, offsetY = 0;
       
-      if (previewAspectRatio > screenAspectRatio) {
-        // Image is wider than screen (letterboxed horizontally)
-        final visibleImageWidth = imageHeight * screenAspectRatio;
-        offsetX = (imageWidth - visibleImageWidth) / 2;
-        offsetY = 0;
+      if (imageAspectRatio > screenAspectRatio) {
+        // Image is wider - it's scaled to fit height, with horizontal letterboxing
+        scaleY = imageHeight / screenHeight;
+        scaleX = scaleY;
         
-        frameWidthInImage = visibleImageWidth * 0.85;
-        frameHeightInImage = frameWidthInImage / 0.714;
-        
-        offsetX += (visibleImageWidth - frameWidthInImage) / 2;
-        offsetY = (imageHeight - frameHeightInImage) / 2;
+        final scaledImageWidth = imageWidth / scaleX;
+        offsetX = (scaledImageWidth - screenWidth) / 2 * scaleX;
       } else {
-        // Image is taller than screen (letterboxed vertically)
-        final visibleImageHeight = imageWidth / screenAspectRatio;
-        offsetX = 0;
-        offsetY = (imageHeight - visibleImageHeight) / 2;
+        // Image is taller - it's scaled to fit width, with vertical letterboxing  
+        scaleX = imageWidth / screenWidth;
+        scaleY = scaleX;
         
-        frameWidthInImage = imageWidth * 0.85;
-        frameHeightInImage = frameWidthInImage / 0.714;
-        
-        offsetX = (imageWidth - frameWidthInImage) / 2;
-        offsetY += (visibleImageHeight - frameHeightInImage) / 2;
+        final scaledImageHeight = imageHeight / scaleY;
+        offsetY = (scaledImageHeight - screenHeight) / 2 * scaleY;
       }
+      
+      // Calculate frame position in image coordinates
+      final frameXOnScreen = (screenWidth - frameWidthOnScreen) / 2;
+      final frameYOnScreen = (screenHeight - frameHeightOnScreen) / 2;
+      
+      final frameXInImage = (frameXOnScreen * scaleX + offsetX).round();
+      final frameYInImage = (frameYOnScreen * scaleY + offsetY).round();
+      final frameWidthInImage = (frameWidthOnScreen * scaleX).round();
+      final frameHeightInImage = (frameHeightOnScreen * scaleY).round();
+      
+      // Ensure crop bounds are within image
+      final cropX = frameXInImage.clamp(0, imageWidth - 1);
+      final cropY = frameYInImage.clamp(0, imageHeight - 1);
+      final cropWidth = (frameWidthInImage).clamp(1, imageWidth - cropX);
+      final cropHeight = (frameHeightInImage).clamp(1, imageHeight - cropY);
 
       // Crop the image
       final croppedImage = img.copyCrop(
         image,
-        x: offsetX.round(),
-        y: offsetY.round(),
-        width: frameWidthInImage.round(),
-        height: frameHeightInImage.round(),
+        x: cropX,
+        y: cropY,
+        width: cropWidth,
+        height: cropHeight,
       );
 
       // Save the cropped image
