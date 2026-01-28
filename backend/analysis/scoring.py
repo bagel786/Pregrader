@@ -7,18 +7,18 @@ class GradingEngine:
     Aggregates sub-scores and maps to a final grade.
     """
     
-    # Grading Scale Mapping - Made more lenient
+    # Grading Scale Mapping - Even more lenient
     GRADE_BRACKETS = [
-        (9.5, "10"),
-        (8.8, "9"),
-        (8.0, "8"),
-        (7.2, "7"),
-        (6.5, "6"),
-        (5.5, "5"),
-        (4.5, "4"),
-        (3.5, "3"),
-        (2.5, "2"),
-        (1.5, "1"),
+        (9.2, "10"),
+        (8.5, "9"),
+        (7.5, "8"),
+        (6.8, "7"),
+        (6.0, "6"),
+        (5.0, "5"),
+        (4.0, "4"),
+        (3.0, "3"),
+        (2.0, "2"),
+        (1.0, "1"),
         (0.0, "0")
     ]
     
@@ -65,40 +65,40 @@ class GradingEngine:
         caps = []
         max_grade = 10.0
         
-        # Cap Rule: Any single corner <= 6.0 -> Max 7 (was 7.5 -> Max 8)
-        if min_corner <= 6.0:
-            max_grade = min(max_grade, 7.0)
-            msg = "Max Grade capped at 7 due to significant corner damage (score <= 6.0)."
+        # Cap Rule: Any single corner <= 5.0 -> Max 6 (was 6.0 -> Max 7)
+        if min_corner <= 5.0:
+            max_grade = min(max_grade, 6.0)
+            msg = "Max Grade capped at 6 due to severe corner damage (score <= 5.0)."
             caps.append(msg)
             explanations.append(msg)
-        elif min_corner <= 7.0:
-            max_grade = min(max_grade, 8.0)
-            msg = "Max Grade capped at 8 due to moderate corner wear (score <= 7.0)."
+        elif min_corner <= 6.5:
+            max_grade = min(max_grade, 7.0)
+            msg = "Max Grade capped at 7 due to significant corner damage (score <= 6.5)."
             caps.append(msg)
             explanations.append(msg)
             
-        # Cap Rule: Whitening on > 3 edges -> Max 7 (was > 2 edges -> Max 8)
-        edges_with_wear = len([s for s in edges_scores if s < 8.5])
-        if edges_with_wear > 3:
-            max_grade = min(max_grade, 7.0)
-            msg = "Max Grade capped at 7 due to wear on all edges."
+        # Cap Rule: Whitening on all 4 edges -> Max 6 (was > 3 edges -> Max 7)
+        edges_with_significant_wear = len([s for s in edges_scores if s < 7.0])
+        if edges_with_significant_wear >= 4:
+            max_grade = min(max_grade, 6.0)
+            msg = "Max Grade capped at 6 due to significant wear on all edges."
             caps.append(msg)
             explanations.append(msg)
-        elif edges_with_wear > 2:
-            max_grade = min(max_grade, 8.0)
-            msg = "Max Grade capped at 8 due to wear on multiple edges."
+        elif edges_with_significant_wear > 2:
+            max_grade = min(max_grade, 7.0)
+            msg = "Max Grade capped at 7 due to wear on multiple edges."
             caps.append(msg)
             explanations.append(msg)
             
-        # Cap Rule: Major surface damage -> Max 5 (was Max 6)
+        # Cap Rule: Major surface damage -> Max 4 (was Max 5)
         if surface_data.get("major_damage_detected", False):
-            max_grade = min(max_grade, 5.0)
-            msg = "Max Grade capped at 5 due to detected crease, dent, or major surface damage."
+            max_grade = min(max_grade, 4.0)
+            msg = "Max Grade capped at 4 due to detected crease, dent, or major surface damage."
             caps.append(msg)
             explanations.append(msg)
             
-        # Final Score with Cap - Add a small boost to account for conservative analysis
-        final_score = min(weighted_score * 1.1, max_grade)  # 10% boost
+        # Final Score with Cap - Add a bigger boost to account for conservative analysis
+        final_score = min(weighted_score * 1.25, max_grade)  # 25% boost instead of 10%
         final_score = min(final_score, 10.0)  # Cap at 10
         final_score = round(final_score, 1)
         
