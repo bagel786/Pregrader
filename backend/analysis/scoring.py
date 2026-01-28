@@ -7,18 +7,18 @@ class GradingEngine:
     Aggregates sub-scores and maps to a final grade.
     """
     
-    # Grading Scale Mapping
+    # Grading Scale Mapping - Made more lenient
     GRADE_BRACKETS = [
-        (9.6, "10"),
-        (9.0, "9"),
-        (8.5, "8"),
-        (8.0, "7"),
-        (7.0, "6"),
-        (6.0, "5"),
-        (5.0, "4"),
-        (4.0, "3"),
-        (3.0, "2"),
-        (2.0, "1"),
+        (9.5, "10"),
+        (8.8, "9"),
+        (8.0, "8"),
+        (7.2, "7"),
+        (6.5, "6"),
+        (5.5, "5"),
+        (4.5, "4"),
+        (3.5, "3"),
+        (2.5, "2"),
+        (1.5, "1"),
         (0.0, "0")
     ]
     
@@ -30,15 +30,15 @@ class GradingEngine:
         surface_data: Dict[str, Any]
     ) -> Dict[str, Any]:
         """
-        Calculates the final grade based on sub-scores and strict capping rules.
+        Calculates the final grade based on sub-scores and more lenient capping rules.
         """
         
         explanations = []
         
         # 1. Extract Sub-scores
         score_centering = centering_score
-        if score_centering < 10:
-            explanations.append(f"Centering score {score_centering}: Ratio deviations detected.")
+        if score_centering < 9.5:
+            explanations.append(f"Centering score {score_centering}: Minor centering issues detected.")
         
         # Corners: Avg of 4 corners
         corners_scores = [c["score"] for c in corners_data["corners"].values()]
@@ -52,43 +52,54 @@ class GradingEngine:
         # Surface: Provided score
         score_surface = surface_data["score"]
         
-        # 2. Weighted Calculation
-        # Weights: Centering 30%, Corners 25%, Edges 25%, Surface 20%
+        # 2. Weighted Calculation - Adjusted weights to be less harsh
+        # Weights: Centering 25%, Corners 25%, Edges 25%, Surface 25%
         weighted_score = (
-            score_centering * 0.30 +
+            score_centering * 0.25 +
             score_corners * 0.25 +
             score_edges * 0.25 +
-            score_surface * 0.20
+            score_surface * 0.25
         )
         
-        # 3. Apply Caps
+        # 3. Apply More Lenient Caps
         caps = []
         max_grade = 10.0
         
-        # Cap Rule: Any single corner <= 7.5 -> Max 8
-        if min_corner <= 7.5:
+        # Cap Rule: Any single corner <= 6.0 -> Max 7 (was 7.5 -> Max 8)
+        if min_corner <= 6.0:
+            max_grade = min(max_grade, 7.0)
+            msg = "Max Grade capped at 7 due to significant corner damage (score <= 6.0)."
+            caps.append(msg)
+            explanations.append(msg)
+        elif min_corner <= 7.0:
             max_grade = min(max_grade, 8.0)
-            msg = "Max Grade capped at 8 due to significant corner damage (score <= 7.5)."
+            msg = "Max Grade capped at 8 due to moderate corner wear (score <= 7.0)."
             caps.append(msg)
             explanations.append(msg)
             
-        # Cap Rule: Whitening on > 2 edges -> Max 8
-        edges_with_wear = len([s for s in edges_scores if s < 9.0])
-        if edges_with_wear > 2:
+        # Cap Rule: Whitening on > 3 edges -> Max 7 (was > 2 edges -> Max 8)
+        edges_with_wear = len([s for s in edges_scores if s < 8.5])
+        if edges_with_wear > 3:
+            max_grade = min(max_grade, 7.0)
+            msg = "Max Grade capped at 7 due to wear on all edges."
+            caps.append(msg)
+            explanations.append(msg)
+        elif edges_with_wear > 2:
             max_grade = min(max_grade, 8.0)
-            msg = "Max Grade capped at 8 due to wear on more than 2 edges."
+            msg = "Max Grade capped at 8 due to wear on multiple edges."
             caps.append(msg)
             explanations.append(msg)
             
-        # Cap Rule: Crease or Dent -> Max 6
+        # Cap Rule: Major surface damage -> Max 5 (was Max 6)
         if surface_data.get("major_damage_detected", False):
-            max_grade = min(max_grade, 6.0)
-            msg = "Max Grade capped at 6 due to detected crease, dent, or major surface damage."
+            max_grade = min(max_grade, 5.0)
+            msg = "Max Grade capped at 5 due to detected crease, dent, or major surface damage."
             caps.append(msg)
             explanations.append(msg)
             
-        # Final Score with Cap
-        final_score = min(weighted_score, max_grade)
+        # Final Score with Cap - Add a small boost to account for conservative analysis
+        final_score = min(weighted_score * 1.1, max_grade)  # 10% boost
+        final_score = min(final_score, 10.0)  # Cap at 10
         final_score = round(final_score, 1)
         
         # 4. Map to Grade Label
@@ -98,10 +109,12 @@ class GradingEngine:
                 grade_label = label
                 break
         
-        # 5. Confidence
+        # 5. Confidence - More optimistic
         confidence = "High"
-        if final_score < 6 or surface_data.get("major_damage_detected", False):
+        if final_score < 5 or surface_data.get("major_damage_detected", False):
              confidence = "Medium" # Harder to gauge severity of damage purely via CV
+        elif final_score < 7:
+             confidence = "Medium"
         
         return {
             "final_score": final_score,

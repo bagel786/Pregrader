@@ -7,9 +7,38 @@ class CameraOverlay extends StatelessWidget {
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        return CustomPaint(
-          size: Size(constraints.maxWidth, constraints.maxHeight),
-          painter: OverlayPainter(),
+        return Stack(
+          children: [
+            CustomPaint(
+              size: Size(constraints.maxWidth, constraints.maxHeight),
+              painter: OverlayPainter(),
+            ),
+            // Instruction text
+            Positioned(
+              bottom: 120,
+              left: 0,
+              right: 0,
+              child: Center(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 8,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.black54,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Text(
+                    'Align card within the frame',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 14,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
         );
       },
     );
@@ -20,10 +49,6 @@ class OverlayPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final paint = Paint()..color = Colors.black54;
-
-    // Draw full screen dimmed background
-    // canvas.drawRect(Rect.fromLTWH(0, 0, size.width, size.height), paint);
-    // Actually we need to draw a path with a hole
 
     // Standard card aspect ratio: 2.5/3.5 = ~0.714
     final cardWidth = size.width * 0.85;
@@ -56,15 +81,76 @@ class OverlayPainter extends CustomPainter {
 
     canvas.drawPath(pathWithCutout, paint);
 
-    // Draw border around the cutout
+    // Draw border around the cutout in purple
     final borderPaint = Paint()
-      ..color = Colors.white
+      ..color = Colors.purple
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 2;
+      ..strokeWidth = 3;
 
     canvas.drawRRect(
       RRect.fromRectAndRadius(overlayRect, const Radius.circular(12)),
       borderPaint,
+    );
+
+    // Draw corner indicators
+    _drawCornerIndicators(canvas, overlayRect);
+  }
+
+  void _drawCornerIndicators(Canvas canvas, Rect rect) {
+    final paint = Paint()
+      ..color = Colors.purple
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 4
+      ..strokeCap = StrokeCap.round;
+
+    const cornerLength = 20.0;
+
+    // Top-left
+    canvas.drawLine(
+      Offset(rect.left, rect.top + cornerLength),
+      Offset(rect.left, rect.top),
+      paint,
+    );
+    canvas.drawLine(
+      Offset(rect.left, rect.top),
+      Offset(rect.left + cornerLength, rect.top),
+      paint,
+    );
+
+    // Top-right
+    canvas.drawLine(
+      Offset(rect.right - cornerLength, rect.top),
+      Offset(rect.right, rect.top),
+      paint,
+    );
+    canvas.drawLine(
+      Offset(rect.right, rect.top),
+      Offset(rect.right, rect.top + cornerLength),
+      paint,
+    );
+
+    // Bottom-left
+    canvas.drawLine(
+      Offset(rect.left, rect.bottom - cornerLength),
+      Offset(rect.left, rect.bottom),
+      paint,
+    );
+    canvas.drawLine(
+      Offset(rect.left, rect.bottom),
+      Offset(rect.left + cornerLength, rect.bottom),
+      paint,
+    );
+
+    // Bottom-right
+    canvas.drawLine(
+      Offset(rect.right - cornerLength, rect.bottom),
+      Offset(rect.right, rect.bottom),
+      paint,
+    );
+    canvas.drawLine(
+      Offset(rect.right, rect.bottom),
+      Offset(rect.right, rect.bottom - cornerLength),
+      paint,
     );
   }
 

@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
 
 class AppTheme {
-  // Define custom colors directly if needed, or use ColorScheme
-  static const Color _primaryColor = Color(0xFF6A1B9A); // Deep Purple
-  static const Color _secondaryColor = Color(0xFFE1BEE7); // Light Purple
+  // Purple color scheme
+  static const Color _primaryPurple = Color(0xFF7B2CBF); // Vibrant Purple
+  static const Color _secondaryPurple = Color(0xFF9D4EDD); // Light Purple
+  static const Color _accentPurple = Color(0xFFC77DFF); // Lighter accent
   static const Color _surfaceLight = Colors.white;
   static const Color _surfaceDark = Color(0xFF1E1E1E);
 
@@ -12,16 +13,33 @@ class AppTheme {
       useMaterial3: true,
       brightness: Brightness.light,
       colorScheme: ColorScheme.fromSeed(
-        seedColor: _primaryColor,
-        secondary: _secondaryColor,
+        seedColor: _primaryPurple,
+        primary: _primaryPurple,
+        secondary: _secondaryPurple,
+        tertiary: _accentPurple,
         surface: Colors.white,
+        brightness: Brightness.light,
       ),
       scaffoldBackgroundColor: _surfaceLight,
       appBarTheme: const AppBarTheme(
         centerTitle: true,
         elevation: 0,
-        backgroundColor: Colors.transparent, // Or colored if preferred
+        backgroundColor: Colors.transparent,
         foregroundColor: Colors.black,
+      ),
+      elevatedButtonTheme: ElevatedButtonThemeData(
+        style: ElevatedButton.styleFrom(
+          backgroundColor: _primaryPurple,
+          foregroundColor: Colors.white,
+          elevation: 2,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+        ),
+      ),
+      floatingActionButtonTheme: const FloatingActionButtonThemeData(
+        backgroundColor: _primaryPurple,
+        foregroundColor: Colors.white,
       ),
     );
   }
@@ -31,16 +49,32 @@ class AppTheme {
       useMaterial3: true,
       brightness: Brightness.dark,
       colorScheme: ColorScheme.fromSeed(
-        seedColor: _primaryColor,
-        secondary: _secondaryColor,
+        seedColor: _primaryPurple,
+        primary: _secondaryPurple,
+        secondary: _accentPurple,
+        tertiary: _primaryPurple,
+        surface: const Color(0xFF2C2C2C),
         brightness: Brightness.dark,
-        surface: Color(0xFF2C2C2C),
       ),
       scaffoldBackgroundColor: _surfaceDark,
       appBarTheme: const AppBarTheme(
         centerTitle: true,
         elevation: 0,
         backgroundColor: Colors.transparent,
+        foregroundColor: Colors.white,
+      ),
+      elevatedButtonTheme: ElevatedButtonThemeData(
+        style: ElevatedButton.styleFrom(
+          backgroundColor: _secondaryPurple,
+          foregroundColor: Colors.white,
+          elevation: 2,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+        ),
+      ),
+      floatingActionButtonTheme: const FloatingActionButtonThemeData(
+        backgroundColor: _secondaryPurple,
         foregroundColor: Colors.white,
       ),
     );

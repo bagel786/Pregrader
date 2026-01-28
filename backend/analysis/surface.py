@@ -66,16 +66,18 @@ def analyze_surface_damage(image_path: str) -> dict:
         major_damage = [c for c in dark_contours if cv2.contourArea(c) > 500] 
         major_damage_detected = len(major_damage) > 0
         
-        # Scoring
+        # More lenient scoring
         score = 10.0
         if scratch_count == 0: score = 10.0
-        elif scratch_count <= 2: score = 9.0  
-        elif scratch_count <= 5: score = 8.5  
-        elif scratch_count <= 10: score = 7.5
-        else: score = 6.0
+        elif scratch_count <= 3: score = 9.5     # Was 2
+        elif scratch_count <= 7: score = 9.0     # Was 5  
+        elif scratch_count <= 12: score = 8.0    # Was 10
+        elif scratch_count <= 20: score = 7.0    # New threshold
+        else: score = 6.5                        # Was 6.0
         
+        # Only apply major damage penalty if really severe
         if major_damage_detected:
-            score = min(score, 6.0)
+            score = min(score, 7.0)               # Was 6.0
         
         # Wrapped return
         return {

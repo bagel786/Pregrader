@@ -58,15 +58,15 @@ def analyze_edge_wear(image_path: str) -> dict:
             total_pixels = roi.shape[0] * roi.shape[1]
             whitening_percentage = (white_pixels / total_pixels) * 100 if total_pixels > 0 else 0
             
-            # Detailed Scoring per Spec
+            # More lenient scoring thresholds
             score = 10.0
-            if whitening_percentage <= 0.5: score = 10.0
-            elif whitening_percentage <= 1.5: score = 9.5
-            elif whitening_percentage <= 3.0: score = 9.0 # Minor specks
-            elif whitening_percentage <= 10.0: score = 8.5 # Continuous/Noticeable
-            elif whitening_percentage <= 25.0: score = 8.0
-            elif whitening_percentage <= 50.0: score = 7.0
-            else: score = 4.0 # Severe
+            if whitening_percentage <= 1.0: score = 10.0     # Was 0.5
+            elif whitening_percentage <= 2.5: score = 9.5    # Was 1.5
+            elif whitening_percentage <= 5.0: score = 9.0    # Was 3.0
+            elif whitening_percentage <= 15.0: score = 8.5   # Was 10.0
+            elif whitening_percentage <= 30.0: score = 8.0   # Was 25.0
+            elif whitening_percentage <= 60.0: score = 7.0   # Was 50.0
+            else: score = 5.0                                # Was 4.0
             
             results[edge_name] = {
                 "score": score,

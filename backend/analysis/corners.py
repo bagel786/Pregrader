@@ -55,15 +55,15 @@ def analyze_corner_wear(image_path: str) -> dict:
             mask = cv2.inRange(hsv, lower_white, upper_white)
             white_pixels = cv2.countNonZero(mask)
             
-            # Scoring per Spec
+            # Scoring per Spec - More lenient thresholds
             score = 10.0
-            if white_pixels <= 5: score = 10.0
-            elif white_pixels <= 20: score = 9.5
-            elif white_pixels <= 50: score = 9.0
-            elif white_pixels <= 100: score = 8.5
-            elif white_pixels <= 200: score = 8.0
-            elif white_pixels <= 400: score = 7.0 # Rounded/Damaged
-            else: score = 5.0 # Severe
+            if white_pixels <= 10: score = 10.0      # Was 5
+            elif white_pixels <= 30: score = 9.5     # Was 20
+            elif white_pixels <= 75: score = 9.0     # Was 50
+            elif white_pixels <= 150: score = 8.5    # Was 100
+            elif white_pixels <= 300: score = 8.0    # Was 200
+            elif white_pixels <= 500: score = 7.0    # Was 400
+            else: score = 6.0                        # Was 5.0
             
             results[name] = {
                 "score": score,
