@@ -2,6 +2,84 @@ import cv2
 import numpy as np
 from .utils import find_card_contour, order_points
 
+def _calculate_edge_score_smooth(whitening_percentage):
+    """
+    Calculate edge score with smooth interpolation.
+    
+    Args:
+        whitening_percentage: Percentage of edge pixels that are white
+    
+    Returns:
+        Score between 5.0 and 10.0
+    """
+    # Recalibrated thresholds (percentage, score)
+    thresholds = [
+        (0.0, 10.0),
+        (1.0, 10.0),
+        (2.5, 9.5),
+        (5.0, 9.0),
+        (15.0, 8.5),
+        (30.0, 8.0),
+        (60.0, 7.0),
+        (float('inf'), 5.0),
+    ]
+    
+    # Linear interpolation
+    for i in range(len(thresholds) - 1):
+        lower_pct, upper_score = thresholds[i]
+        upper_pct, lower_score = thresholds[i + 1]
+        
+        if whitening_percentage <= upper_pct:
+            if upper_pct == lower_pct:
+                return upper_score
+            
+            pct_range = upper_pct - lower_pct
+            score_range = upper_score - lower_score
+            pct_position = (whitening_percentage - lower_pct) / pct_range if pct_range > 0 else 0
+            
+            score = upper_score - (score_range * pct_position)
+            return round(score, 1)
+    
+    return 5.0  # Fallback
+
+
+def calculate_edge_grade(edge_scores_dict):
+    """
+    Calculate overall edge grade from 4 edge measurements.
+    Considers multiple edges with wear and applies gradual penalties.
+    
+    Args:
+        edge_scores_dict: Dictionary of edge scores
+    
+    Returns:
+        Final edge grade
+    """
+    scores = list(edge_scores_dict.values())
+    
+    if not scores:
+        return 7.0
+    
+    # Count how many edges have wear
+    edges_with_wear = sum(1 for s in scores if s < 9.0)
+    
+    # Average the scores
+    avg_score = sum(scores) / len(scores)
+    
+    # Apply penalty for multiple edges with wear
+    if edges_with_wear >= 3:
+        # Wear on 3-4 edges significantly impacts grade
+        penalty = edges_with_wear * 0.4
+    elif edges_with_wear >= 2:
+        # Wear on 2 edges moderate impact
+        penalty = 0.5
+    else:
+        # Wear on 0-1 edges minimal impact
+        penalty = 0
+    
+    final_score = max(avg_score - penalty, min(scores))
+    
+    return round(final_score, 1)
+
 def analyze_edge_wear(image_path: str) -> dict:
     """
     Analyzes the 4 edges of a Pokemon card for whitening/wear.
@@ -58,23 +136,28 @@ def analyze_edge_wear(image_path: str) -> dict:
             total_pixels = roi.shape[0] * roi.shape[1]
             whitening_percentage = (white_pixels / total_pixels) * 100 if total_pixels > 0 else 0
             
-            # More lenient scoring thresholds
-            score = 10.0
-            if whitening_percentage <= 1.0: score = 10.0     # Was 0.5
-            elif whitening_percentage <= 2.5: score = 9.5    # Was 1.5
-            elif whitening_percentage <= 5.0: score = 9.0    # Was 3.0
-            elif whitening_percentage <= 15.0: score = 8.5   # Was 10.0
-            elif whitening_percentage <= 30.0: score = 8.0   # Was 25.0
-            elif whitening_percentage <= 60.0: score = 7.0   # Was 50.0
-            else: score = 5.0                                # Was 4.0
+            # Smooth scoring with interpolation
+            score = _calculate_edge_score_smooth(whitening_percentage)
             
             results[edge_name] = {
                 "score": score,
                 "whitening_percentage": round(whitening_percentage, 2),
             }
         
+        # Calculate overall edge grade and confidence
+        edge_scores = {k: v["score"] for k, v in results.items()}
+        overall_grade = calculate_edge_grade(edge_scores)
+        
+        # Confidence based on ROI extraction success
+        confidence = 1.0
+        errors = sum(1 for v in results.values() if v.get("note"))
+        if errors > 0:
+            confidence = max(0.5, 1.0 - (errors * 0.15))
+        
         return {
-            "edges": results
+            "edges": results,
+            "overall_grade": overall_grade,
+            "confidence": confidence
         }
 
     except Exception as e:

@@ -2,6 +2,82 @@ import cv2
 import numpy as np
 from .utils import find_card_contour, order_points
 
+def _calculate_corner_score_smooth(whitening_pixels):
+    """
+    Calculate corner score with smooth interpolation.
+    
+    Args:
+        whitening_pixels: Number of white pixels detected in corner
+    
+    Returns:
+        Score between 1.0 and 10.0
+    """
+    # Recalibrated thresholds (pixels, score)
+    thresholds = [
+        (0, 10.0),      # Perfect
+        (10, 10.0),     # Near perfect
+        (30, 9.5),      # Excellent
+        (75, 9.0),      # Very good
+        (150, 8.5),     # Good
+        (300, 8.0),     # Fair
+        (500, 7.0),     # Acceptable
+        (float('inf'), 6.0),  # Worn
+    ]
+    
+    # Linear interpolation
+    for i in range(len(thresholds) - 1):
+        lower_px, upper_score = thresholds[i]
+        upper_px, lower_score = thresholds[i + 1]
+        
+        if whitening_pixels <= upper_px:
+            if upper_px == lower_px:
+                return upper_score
+            
+            px_range = upper_px - lower_px
+            score_range = upper_score - lower_score
+            px_position = (whitening_pixels - lower_px) / px_range if px_range > 0 else 0
+            
+            score = upper_score - (score_range * px_position)
+            return round(score, 1)
+    
+    return 6.0  # Fallback
+
+
+def calculate_corner_grade(corner_scores):
+    """
+    Calculate overall corner grade from 4 individual corner assessments.
+    Uses averaging with penalty for worst corner.
+    
+    Args:
+        corner_scores: List of 4 corner scores
+    
+    Returns:
+        Final corner grade
+    """
+    if not corner_scores or len(corner_scores) != 4:
+        return 7.0  # Conservative default
+    
+    # Average all corners
+    avg_score = sum(corner_scores) / len(corner_scores)
+    
+    # Apply penalty based on worst corner
+    worst_corner = min(corner_scores)
+    
+    # Penalty scaling: worse corners have bigger impact
+    if worst_corner < 6.0:
+        # Severe damage on one corner
+        penalty = (6.0 - worst_corner) * 0.5
+    elif worst_corner < 8.0:
+        # Moderate damage
+        penalty = (8.0 - worst_corner) * 0.3
+    else:
+        # Minor or no damage
+        penalty = 0
+    
+    final_score = max(avg_score - penalty, worst_corner)
+    
+    return round(final_score, 1)
+
 def analyze_corner_wear(image_path: str) -> dict:
     """
     Analyzes the 4 corners of a Pokemon card for whitening/wear.
@@ -55,24 +131,28 @@ def analyze_corner_wear(image_path: str) -> dict:
             mask = cv2.inRange(hsv, lower_white, upper_white)
             white_pixels = cv2.countNonZero(mask)
             
-            # Scoring per Spec - More lenient thresholds
-            score = 10.0
-            if white_pixels <= 10: score = 10.0      # Was 5
-            elif white_pixels <= 30: score = 9.5     # Was 20
-            elif white_pixels <= 75: score = 9.0     # Was 50
-            elif white_pixels <= 150: score = 8.5    # Was 100
-            elif white_pixels <= 300: score = 8.0    # Was 200
-            elif white_pixels <= 500: score = 7.0    # Was 400
-            else: score = 6.0                        # Was 5.0
+            # Scoring with smooth interpolation
+            score = _calculate_corner_score_smooth(white_pixels)
             
             results[name] = {
                 "score": score,
                 "whitening_pixels": white_pixels,
             }
             
+        # Calculate overall corner grade and confidence
+        corner_scores = [c["score"] for c in results.values()]
+        overall_grade = calculate_corner_grade(corner_scores)
+        
+        # Confidence based on ROI extraction success
+        confidence = 1.0
+        if any(c.get("note") for c in results.values()):
+            confidence = 0.6  # Had issues extracting some corners
+        
         # Overall grade calculated in grading_system.py, but we return the raw data
         return {
-            "corners": results
+            "corners": results,
+            "overall_grade": overall_grade,
+            "confidence": confidence
         }
 
     except Exception as e:

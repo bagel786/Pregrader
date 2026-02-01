@@ -79,12 +79,25 @@ def analyze_surface_damage(image_path: str) -> dict:
         if major_damage_detected:
             score = min(score, 7.0)               # Was 6.0
         
+        # Calculate confidence based on glare
+        glare_pixels = cv2.countNonZero(glare_mask)
+        total_pixels = card_roi.shape[0] * card_roi.shape[1]
+        glare_percentage = (glare_pixels / total_pixels) * 100 if total_pixels > 0 else 0
+        
+        confidence = 1.0
+        if glare_percentage > 20:
+            confidence = 0.7
+        elif glare_percentage > 10:
+            confidence = 0.85
+        
         # Wrapped return
         return {
             "surface": {
                 "score": score,
                 "scratch_count": scratch_count,
-                "major_damage_detected": major_damage_detected
+                "major_damage_detected": major_damage_detected,
+                "confidence": confidence,
+                "glare_percentage": round(glare_percentage, 1)
             }
         }
 
