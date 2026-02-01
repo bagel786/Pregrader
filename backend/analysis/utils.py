@@ -295,7 +295,27 @@ def detect_card_robust(image):
             # Log error but continue to next method
             print(f"Detection method {method_name} failed: {e}")
             continue
-    
+            
+    # Fallback: Check if the image itself is the card (pre-cropped)
+    # The frontend app often crops to the card frame.
+    if best_confidence < 0.5:
+        h, w = image.shape[:2]
+        if h > 0 and w > 0:
+            aspect = min(w, h) / max(w, h)
+            # Accept if aspect ratio is roughly correct (allow some variance)
+            if 0.60 <= aspect <= 0.85:
+                # Create a contour that covers the whole image
+                full_image_contour = np.array([
+                    [0, 0],
+                    [w-1, 0],
+                    [w-1, h-1],
+                    [0, h-1]
+                ], dtype=np.int32)
+                
+                # Assign a moderate confidence since we're assuming it's a card
+                # but valid enough to proceed with analysis
+                return full_image_contour, 0.8, "full_frame_fallback"
+
     return best_result, best_confidence, best_method
 
 

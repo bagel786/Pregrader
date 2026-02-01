@@ -16,7 +16,16 @@ class ResultScreen extends StatelessWidget {
     final grading = gradingResult['grading'] ?? {};
     final finalScore = grading['final_score'] ?? 0.0;
     final psaEstimate = grading['psa_estimate'] ?? "?";
-    final confidence = grading['confidence'] ?? "Unknown";
+
+    // Fix: Handle confidence as Map (new format) or String (legacy)
+    final confidenceData = grading['confidence'];
+    String confidenceLevel = "Unknown";
+    if (confidenceData is Map) {
+      confidenceLevel = confidenceData['level']?.toString() ?? "Unknown";
+    } else if (confidenceData is String) {
+      confidenceLevel = confidenceData;
+    }
+
     final subScores = grading['sub_scores'] as Map<String, dynamic>? ?? {};
     final explanations = grading['explanations'] as List<dynamic>? ?? [];
 
@@ -133,7 +142,7 @@ class ResultScreen extends StatelessWidget {
               style: const TextStyle(color: Colors.white54),
             ),
             const SizedBox(height: 5),
-            _buildConfidenceChip(confidence),
+            _buildConfidenceChip(confidenceLevel),
 
             const SizedBox(height: 30),
 
