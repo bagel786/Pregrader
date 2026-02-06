@@ -1,166 +1,219 @@
+"""
+Improved centering analysis with robust card detection.
+"""
 import cv2
 import numpy as np
-from .utils import find_card_contour
+from typing import Dict, Optional
+from .vision.image_preprocessing import (
+    find_card_contour,
+    get_card_corners,
+    perspective_correct_card
+)
 
-def _calculate_centering_grade_smooth(worst_ratio):
+
+def detect_inner_artwork_box(image: np.ndarray) -> Optional[np.ndarray]:
     """
-    Calculate centering grade with smooth linear interpolation.
-    No sharp boundaries - gradual scoring between thresholds.
+    Detect the inner artwork/text box of a Pokémon card.
     
     Args:
-        worst_ratio: The smaller of horizontal and vertical centering ratios
-    
+        image: Card image (should be perspective-corrected)
+        
     Returns:
-        Grade estimate (float)
+        Bounding rectangle [x, y, w, h] or None
     """
-    # Define calibrated thresholds (ratio, grade)
-    # Recalibrated to remove need for 1.25x boost
-    thresholds = [
-        (1.00, 10.0),   # Perfect
-        (0.95, 10.0),   # Near perfect
-        (0.90, 9.0),    # Excellent  
-        (0.85, 8.5),    # Very good
-        (0.80, 8.0),    # Good
-        (0.75, 7.5),    # Fair
-        (0.70, 7.0),    # Acceptable
-        (0.65, 6.5),    # Poor
-        (0.00, 5.0),    # Very poor
-    ]
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     
-    # Linear interpolation between thresholds
-    for i in range(len(thresholds) - 1):
-        upper_ratio, upper_grade = thresholds[i]
-        lower_ratio, lower_grade = thresholds[i + 1]
-        
-        if worst_ratio >= lower_ratio:
-            # Interpolate between these two points
-            if upper_ratio == lower_ratio:
-                return upper_grade
-            
-            ratio_range = upper_ratio - lower_ratio
-            grade_range = upper_grade - lower_grade
-            ratio_position = (worst_ratio - lower_ratio) / ratio_range
-            
-            grade = lower_grade + (grade_range * ratio_position)
-            return round(grade, 1)
+    # Apply Gaussian blur
+    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
     
-    return 5.0  # Fallback
+    # Canny edge detection
+    edges = cv2.Canny(blurred, 50, 150)
+    
+    # Find contours
+    contours, _ = cv2.findContours(
+        edges,
+        cv2.RETR_TREE,
+        cv2.CHAIN_APPROX_SIMPLE
+    )
+    
+    # Filter contours by area and position
+    valid_boxes = []
+    img_height, img_width = image.shape[:2]
+    
+    for cnt in contours:
+        area = cv2.contourArea(cnt)
+        
+        # Artwork box should be significant but not entire card
+        # Typically 15-70% of card area
+        if area < (img_width * img_height * 0.15):
+            continue
+        if area > (img_width * img_height * 0.70):
+            continue
+        
+        x, y, w, h = cv2.boundingRect(cnt)
+        
+        # Should be in upper portion of card (not the bottom text box)
+        if y > img_height * 0.5:
+            continue
+        
+        # Should have reasonable aspect ratio
+        aspect = w / h
+        if aspect < 0.8 or aspect > 1.5:
+            continue
+        
+        valid_boxes.append((x, y, w, h))
+    
+    if not valid_boxes:
+        return None
+    
+    # Return largest valid box (likely the artwork frame)
+    return max(valid_boxes, key=lambda box: box[2] * box[3])
 
-def calculate_centering_ratios(image_path: str) -> dict:
+
+def calculate_centering_score(
+    left: float,
+    right: float,
+    top: float,
+    bottom: float
+) -> float:
     """
-    Analyzes a Pokemon card image to determine centering ratios.
+    Calculate centering score based on border measurements.
+    
+    Uses smooth interpolation rather than hard cutoffs.
+    
+    Args:
+        left, right, top, bottom: Border widths in pixels
+        
+    Returns:
+        Score from 1.0 to 10.0
     """
-    try:
-        # 1. Load Image
-        image = cv2.imread(image_path)
-        if image is None:
-            return {"error": "Failed to load image"}
+    # Calculate ratios (smaller / larger for each axis)
+    lr_ratio = min(left, right) / max(left, right) if max(left, right) > 0 else 1.0
+    tb_ratio = min(top, bottom) / max(top, bottom) if max(top, bottom) > 0 else 1.0
+    
+    # Average the two ratios
+    avg_ratio = (lr_ratio + tb_ratio) / 2.0
+    
+    # Smooth scoring using linear interpolation
+    # Perfect centering (1.00 ratio) = 10.0
+    # 0.95 ratio = 9.0
+    # 0.90 ratio = 8.0
+    # etc.
+    if avg_ratio >= 0.975:
+        return 10.0
+    elif avg_ratio >= 0.95:
+        # Interpolate between 9.0 and 10.0
+        return 9.0 + (avg_ratio - 0.95) / 0.025
+    elif avg_ratio >= 0.90:
+        return 8.0 + (avg_ratio - 0.90) / 0.05 * 1.0
+    elif avg_ratio >= 0.85:
+        return 7.0 + (avg_ratio - 0.85) / 0.05 * 1.0
+    elif avg_ratio >= 0.80:
+        return 6.0 + (avg_ratio - 0.80) / 0.05 * 1.0
+    elif avg_ratio >= 0.75:
+        return 5.0 + (avg_ratio - 0.75) / 0.05 * 1.0
+    elif avg_ratio >= 0.70:
+        return 4.0 + (avg_ratio - 0.70) / 0.05 * 1.0
+    else:
+        # Very poor centering
+        return max(1.0, avg_ratio * 5.0)
 
-        # 2. Find Exterior Contour (Outer Border)
-        result = find_card_contour(image)
-        if not result:
-             # Just return a rough estimate if we can't find it clearly?
-             # No, spec says "conservative bias". Error implies manual review needed.
-             return {"error": "No card detected."}
-        
-        _, (ox, oy, ow, oh) = result
-        outer_area = ow * oh
 
-        # 3. Search for Inner Border (Artwork)
-        roi = image[oy:oy+oh, ox:ox+ow]
-        roi_gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
-        roi_blur = cv2.GaussianBlur(roi_gray, (5, 5), 0)
-        roi_edges = cv2.Canny(roi_blur, 30, 100)
+def calculate_centering_ratios(
+    image_path: str,
+    debug_output_path: Optional[str] = None
+) -> Dict:
+    """
+    Analyze card centering and return detailed measurements.
+    
+    Args:
+        image_path: Path to card image
+        debug_output_path: Optional path to save debug visualization
         
-        roi_contours, _ = cv2.findContours(roi_edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        
-        inner_candidates = []
-        for cnt in roi_contours:
-            perimeter = cv2.arcLength(cnt, True)
-            approx = cv2.approxPolyDP(cnt, 0.04 * perimeter, True)
-            
-            if len(approx) == 4:
-                rect = cv2.boundingRect(approx)
-                ix, iy, iw, ih = rect
-                area = iw * ih
-                
-                # Check if it's substantially smaller than the outer box but large enough
-                # Artwork is usually ~60-80% of the card area
-                if area < (outer_area * 0.95) and area > (outer_area * 0.3):
-                    inner_candidates.append((area, rect))
-
-        inner_candidates.sort(key=lambda x: x[0], reverse=True)
-        
-        if not inner_candidates:
-             return {
-                "error": "Card found, but inner artwork frame not detected.",
-                "grade_estimate": 8.0 # Conservative fail-safe
-            }
-            
-        _, (rix, riy, riw, rih) = inner_candidates[0]
-        
-        # Calculate Borders
-        left_border = max(1, rix)
-        top_border = max(1, riy)
-        right_border = max(1, ow - (rix + riw))
-        bottom_border = max(1, oh - (riy + rih))
-
-        # Calculate Ratios (Smaller / Larger) as per spec
-        ratio_h = min(left_border, right_border) / max(left_border, right_border)
-        ratio_v = min(top_border, bottom_border) / max(top_border, bottom_border)
-        
-        # Calculate worst ratio (conservative)
-        worst_ratio = min(ratio_h, ratio_v)
-        
-        # Smooth grade calculation with linear interpolation (no sharp boundaries)
-        est_grade = _calculate_centering_grade_smooth(worst_ratio)
-        
-        # Calculate confidence based on detection quality
-        confidence_factors = []
-        
-        # Factor 1: Were all borders detected?
-        if all([left_border > 0, right_border > 0, top_border > 0, bottom_border > 0]):
-            confidence_factors.append(1.0)
-        else:
-            confidence_factors.append(0.3)
-        
-        # Factor 2: Are measurements consistent?
-        h_variance = abs(left_border - right_border) / max(left_border, right_border)
-        v_variance = abs(top_border - bottom_border) / max(top_border, bottom_border)
-        
-        if h_variance < 0.15 and v_variance < 0.15:
-            confidence_factors.append(1.0)
-        elif h_variance < 0.30 and v_variance < 0.30:
-            confidence_factors.append(0.7)
-        else:
-            confidence_factors.append(0.4)
-        
-        # Factor 3: Artwork frame was detected
-        confidence_factors.append(1.0)  # If we got here, frame was detected
-        
-        overall_confidence = sum(confidence_factors) / len(confidence_factors)
-
+    Returns:
+        Dict with centering analysis results
+    """
+    # Load image
+    image = cv2.imread(image_path)
+    if image is None:
         return {
-            "horizontal": {
-                "left_px": left_border,
-                "right_px": right_border,
-                "ratio": round(ratio_h, 3),
-            },
-            "vertical": {
-                "top_px": top_border,
-                "bottom_px": bottom_border,
-                "ratio": round(ratio_v, 3),
-            },
-            "worst_ratio": round(worst_ratio, 3),
-            "grade_estimate": est_grade,
-            "confidence": round(overall_confidence, 2)
+            "success": False,
+            "error": "Could not load image",
+            "score": 5.0
         }
+    
+    # Find card boundary
+    card_contour = find_card_contour(image)
+    if card_contour is None:
+        return {
+            "success": False,
+            "error": "Could not detect card boundary",
+            "score": 5.0,
+            "grade_estimate": 5.0
+        }
+    
+    # Get corners and apply perspective correction
+    corners = get_card_corners(card_contour)
+    corrected = perspective_correct_card(image, corners)
+    
+    # Detect inner artwork box
+    artwork_box = detect_inner_artwork_box(corrected)
+    if artwork_box is None:
+        return {
+            "success": False,
+            "error": "Could not detect artwork box",
+            "score": 6.0, # Slight penalty but don't fail hard
+            "grade_estimate": 6.0
+        }
+    
+    x, y, w, h = artwork_box
+    img_height, img_width = corrected.shape[:2]
+    
+    # Calculate border widths
+    left = x
+    right = img_width - (x + w)
+    top = y
+    bottom = img_height - (y + h)
+    
+    # Calculate score
+    score = calculate_centering_score(left, right, top, bottom)
+    
+    # Calculate percentages for display
+    total_lr = left + right
+    total_tb = top + bottom
+    
+    left_pct = (left / total_lr * 100) if total_lr > 0 else 50.0
+    right_pct = (right / total_lr * 100) if total_lr > 0 else 50.0
+    top_pct = (top / total_tb * 100) if total_tb > 0 else 50.0
+    bottom_pct = (bottom / total_tb * 100) if total_tb > 0 else 50.0
+    
+    # Debug visualization
+    if debug_output_path:
+        debug_img = corrected.copy()
+        cv2.rectangle(debug_img, (x, y), (x + w, y + h), (0, 255, 0), 2)
+        
+        # Draw measurements
+        cv2.putText(debug_img, f"L: {left}px", (10, 30),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
+        cv2.putText(debug_img, f"R: {right}px", (img_width - 100, 30),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
+        cv2.putText(debug_img, f"Score: {score:.1f}", (10, img_height - 10),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+        
+        cv2.imwrite(debug_output_path, debug_img)
+    
+    return {
+        "success": True,
+        "score": round(score, 1),
+        "grade_estimate": round(score, 1), # Backward compatibility
+        "measurements": {
+            "left_px": left,
+            "right_px": right,
+            "top_px": top,
+            "bottom_px": bottom,
+            "left_right_ratio": f"{left_pct:.1f}/{right_pct:.1f}",
+            "top_bottom_ratio": f"{top_pct:.1f}/{bottom_pct:.1f}"
+        },
+        "confidence": 1.0 if score > 3.0 else 0.5
+    }
 
-    except Exception as e:
-        return {"error": str(e), "grade_estimate": 0, "confidence": 0.0}
-
-if __name__ == "__main__":
-    import sys
-    import json
-    if len(sys.argv) > 1:
-        print(json.dumps(calculate_centering_ratios(sys.argv[1]), indent=2))

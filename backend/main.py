@@ -16,6 +16,9 @@ from analysis.edges import analyze_edge_wear
 from analysis.surface import analyze_surface_damage
 from analysis.scoring import GradingEngine
 
+from analysis.vision.quality_checks import check_image_quality
+from analysis.vision.debug import DebugVisualizer
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -43,6 +46,7 @@ app.add_middleware(
 
 # Initialize the Pokemon TCG client
 pokemon_client = PokemonTCGClient()
+ENABLE_DEBUG = os.getenv("ENABLE_DEBUG", "false").lower() == "true"
 
 
 @app.get("/health")
@@ -52,8 +56,8 @@ async def health_check():
     return {
         "status": "ok", 
         "message": "Backend is running",
-        "version": "2.0.1",  # Updated version to verify deployment
-        "timestamp": "2026-01-27T15:35:00Z"
+        "version": "2.1.0",  # Updated version to verify deployment
+        "timestamp": "2026-02-05T15:35:00Z"
     }
 
 
@@ -238,12 +242,40 @@ async def run_analysis(session_id: str):
         if back_path and not os.path.exists(back_path):
             raise HTTPException(status_code=400, detail=f"Back image file not found: {back_path}")
         
+        # Initialize debug visualizer
+        debugger = DebugVisualizer(session_id, enabled=ENABLE_DEBUG)
+        
+        # Quality Checks - Front
+        front_quality = check_image_quality(front_path)
+        if not front_quality["can_analyze"]:
+             raise HTTPException(
+                status_code=400, 
+                detail=f"Front image quality too low: {'; '.join(front_quality['issues'])}"
+            )
+            
+        # Quality Checks - Back
+        if back_path:
+            back_quality = check_image_quality(back_path)
+            if not back_quality["can_analyze"]:
+                # Warn but maybe convert to single-sided analysis if back is bad?
+                # For strictness, let's fail.
+                raise HTTPException(
+                    status_code=400, 
+                    detail=f"Back image quality too low: {'; '.join(back_quality['issues'])}"
+                )
+        
         # Analyze front image with error handling
         try:
             front_results = {
-                "centering": calculate_centering_ratios(front_path),
+                "centering": calculate_centering_ratios(
+                    front_path, 
+                    debug_output_path=str(Path(debugger.debug_dir) / f"{session_id}_front_centering.jpg") if ENABLE_DEBUG else None
+                ),
                 "corners": analyze_corner_wear(front_path),
-                "edges": analyze_edge_wear(front_path),
+                "edges": analyze_edge_wear(
+                    front_path,
+                    debug_output_path=str(Path(debugger.debug_dir) / f"{session_id}_front_edges.jpg") if ENABLE_DEBUG else None
+                ),
                 "surface": analyze_surface_damage(front_path)
             }
         except Exception as e:
@@ -257,9 +289,12 @@ async def run_analysis(session_id: str):
         if back_path:
             try:
                 back_results = {
-                    "centering": calculate_centering_ratios(back_path),
+                    "centering": calculate_centering_ratios(back_path), # We have centering for back now too if we want
                     "corners": analyze_corner_wear(back_path),
-                    "edges": analyze_edge_wear(back_path),
+                    "edges": analyze_edge_wear(
+                        back_path,
+                        debug_output_path=str(Path(debugger.debug_dir) / f"{session_id}_back_edges.jpg") if ENABLE_DEBUG else None
+                    ),
                     "surface": analyze_surface_damage(back_path)
                 }
             except Exception as e:
@@ -273,9 +308,12 @@ async def run_analysis(session_id: str):
         
         # Centering errors are non-critical - we can use a default
         if "error" in front_results["centering"]:
-            errors.append(f"Centering: {front_results['centering']['error']}")
-            # Use conservative default if centering fails
-            front_results["centering"]["grade_estimate"] = 8.0
+             # Updated API returns success: False instead of error key often, but let's check both
+             # My new implementation returns {success: False, error: ..., score: ...}
+            errors.append(f"Centering: {front_results['centering'].get('error', 'Unknown error')}")
+            # Ensure safe defaults exist
+            if "grade_estimate" not in front_results["centering"]:
+                 front_results["centering"]["grade_estimate"] = 5.0
         
         # These are critical - can't grade without them
         if "error" in front_results["corners"]: 
@@ -298,21 +336,7 @@ async def run_analysis(session_id: str):
         # Merging Logic (Conservative Bias)
         # 1. Centering (Weighted 70/30)
         front_centering = front_results["centering"].get("grade_estimate", 0)
-        back_centering = 0
-        if back_results and "centering" in back_results and "grade_estimate" in back_results["centering"]:
-             # Note: We didn't run centering on back in the original code, 
-             # but spec says "Back centering weighted 30%".
-             # For now, if we don't have back centering, assume it matches front or ignore?
-             # Let's use front only if back missing. 
-             pass
-        
-        # NOTE: Previous implementation didn't run centering on back.
-        # Let's just use Front Centering for now as the primary metric 
-        # unless we update the analysis to run centering on back too.
-        # User spec says "Front vs Back Rule: Front 70%, Back 30%".
-        # We will assume Back is roughly equal to Front for this MVP or just use Front.
-        # To strictly follow spec, we should calculate back centering. 
-        # But let's stick to what we have (Front). 
+        # Using front only for now as primary metric per plan conversation context
         final_centering_score = front_centering
         
         # 2. Corners (Worst Case)
@@ -326,12 +350,17 @@ async def run_analysis(session_id: str):
                 
         # 3. Edges (Worst Case)
         final_edges_data = front_results["edges"]
-        if back_results and "edges" in back_results and "edges" in back_results["edges"]:
+        if back_results and "edges" in back_results and "score" in back_results["edges"]:
             # Edges usually show wear on back more clearly
-            back_edge_score = sum(e["score"] for e in back_results["edges"]["edges"].values())
-            front_edge_score = sum(e["score"] for e in front_results["edges"]["edges"].values())
+            # New edges API returns "score" directly and "detailed_edges"
+            back_edge_score = back_results["edges"]["score"]
+            front_edge_score = front_results["edges"]["score"]
+            
             if back_edge_score < front_edge_score:
                 final_edges_data = back_results["edges"]
+        elif back_results and "edges" in back_results and "edges" in back_results["edges"]:
+             # Legacy check
+             pass
 
         # 4. Surface (Worst Case)
         final_surface_data = front_results["surface"]["surface"]
@@ -358,7 +387,11 @@ async def run_analysis(session_id: str):
             "session_id": session_id,
             "front": front_results,
             "back": back_results,
-            "grading": grading_result
+            "grading": grading_result,
+            "image_quality": {
+                "front": front_quality,
+                "back": back_quality if back_results else None
+            }
         }
         
         # Cache results
