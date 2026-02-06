@@ -1,10 +1,94 @@
 """
 Advanced edge wear detection using color space analysis.
+Supports both card front (various border colors) and back (blue).
 """
 import cv2
 import numpy as np
 from typing import Dict, List, Optional, Tuple
 from .vision.image_preprocessing import find_card_contour
+
+
+def detect_card_side(image: np.ndarray) -> Tuple[str, float]:
+    """
+    Detect if image shows card front or back.
+    
+    Pokemon card backs have a distinctive blue pattern with Pokeball.
+    Fronts have varied artwork and yellow/colored borders.
+    
+    Args:
+        image: BGR card image
+        
+    Returns:
+        Tuple of ("front" or "back", confidence 0.0-1.0)
+    """
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    
+    # Check for blue dominance (card backs are blue)
+    # Blue hue range in HSV: 100-130
+    blue_mask = cv2.inRange(hsv, np.array([90, 50, 30]), np.array([140, 255, 255]))
+    blue_percentage = cv2.countNonZero(blue_mask) / blue_mask.size * 100
+    
+    # Check for yellow (most card fronts have yellow borders)
+    yellow_mask = cv2.inRange(hsv, np.array([20, 80, 100]), np.array([40, 255, 255]))
+    yellow_percentage = cv2.countNonZero(yellow_mask) / yellow_mask.size * 100
+    
+    # Strong blue presence (>40%) and minimal yellow = back
+    if blue_percentage > 40 and yellow_percentage < 5:
+        confidence = min(1.0, blue_percentage / 60)
+        return "back", confidence
+    
+    # Moderate or no blue = front
+    if blue_percentage < 20:
+        confidence = min(1.0, (100 - blue_percentage) / 80)
+        return "front", confidence
+    
+    # Ambiguous - default to front with lower confidence
+    return "front", 0.6
+
+
+def analyze_whitening_for_front(
+    image: np.ndarray,
+    border_mask: np.ndarray
+) -> Tuple[float, int, int]:
+    """
+    Analyze whitening on card front edges.
+    
+    Front edges don't have consistent blue - uses brightness
+    relative to border average to detect paper showing through.
+    
+    Args:
+        image: BGR image
+        border_mask: Binary mask of border region
+        
+    Returns:
+        (whitening_percentage, whitened_pixels, total_pixels)
+    """
+    if cv2.countNonZero(border_mask) == 0:
+        return 0.0, 0, 0
+    
+    # Convert to LAB for lightness analysis
+    lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
+    l_channel = lab[:, :, 0]
+    
+    # Get pixels in border region
+    border_pixels = l_channel[border_mask > 0]
+    
+    if len(border_pixels) == 0:
+        return 0.0, 0, 0
+    
+    # Calculate average lightness of border
+    avg_lightness = np.mean(border_pixels)
+    
+    # White pixels are significantly brighter than average
+    # Adaptive threshold: 40 points above the average or absolute 180
+    adaptive_threshold = min(avg_lightness + 40, 180)
+    
+    whitened_pixels = np.sum(border_pixels > adaptive_threshold)
+    total_pixels = len(border_pixels)
+    
+    whitening_percentage = (whitened_pixels / total_pixels) * 100
+    
+    return whitening_percentage, int(whitened_pixels), total_pixels
 
 
 def create_border_mask(
@@ -220,44 +304,45 @@ def analyze_edge_wear(
             "grade_estimate": 5.0
         }
     
-    # Create border mask (30px is a heuristic, scalable with image size?)
-    # Ideally scaled by image size. A standard card is ~2000px high.
-    # 30px is ~1.5%. Let's adapt it.
+    # Detect if this is front or back of card
+    card_side, side_confidence = detect_card_side(image)
+    
+    # Create border mask - resolution independent (3% of dimension)
     h, w = image.shape[:2]
-    border_px = max(15, int(min(h, w) * 0.03)) # 3% of width
+    border_px = max(15, int(min(h, w) * 0.03))
     
     border_mask = create_border_mask(image, card_contour, border_thickness=border_px)
     
-    # Detect blue regions (card borders) -- This assumes Pokemon card BACK or blue border front
-    # If it's a front image that is NOT blue (e.g. fire type), this blue check might fail.
-    # But usually front edges are silver/yellow.
-    # Spec implied this is mostly for the BACK of the card where wear is visible.
-    # But we apply it to front too?
-    # Whitening is white paper showing.
-    # Let's trust the blue detection for now as most wear analysis is on back or borders.
-    # If blue detection returns empty, we might skip or fallback?
-    blue_mask = detect_blue_regions(image)
-    
-    # Combine: we only care about blue border regions
-    # If valid blue border found, intersect. If not (maybe front of non-blue card), use border mask?
-    # Whitening relies on contrast against dark border.
-    if cv2.countNonZero(blue_mask) > (cv2.countNonZero(border_mask) * 0.1):
-        edge_mask = cv2.bitwise_and(border_mask, blue_mask)
+    # Choose analysis method based on card side
+    if card_side == "back":
+        # Card back: use blue region detection for precise analysis
+        blue_mask = detect_blue_regions(image)
+        
+        if cv2.countNonZero(blue_mask) > (cv2.countNonZero(border_mask) * 0.1):
+            edge_mask = cv2.bitwise_and(border_mask, blue_mask)
+        else:
+            edge_mask = border_mask
+        
+        # Analyze whitening using fixed threshold (blue → white)
+        whitening_pct, whitened_px, total_px = analyze_whitening_in_region(image, edge_mask)
+        analysis_method = "blue_detection"
     else:
-        # Fallback: just use geometric border if colors don't match blue
-        # Risk: Might detect artwork as whitening
+        # Card front: use adaptive brightness-based analysis
         edge_mask = border_mask
-    
-    # Analyze overall whitening
-    whitening_pct, whitened_px, total_px = analyze_whitening_in_region(image, edge_mask)
+        whitening_pct, whitened_px, total_px = analyze_whitening_for_front(image, edge_mask)
+        analysis_method = "adaptive_front"
     
     # Split into individual edges for detailed analysis
     edge_masks = split_edges(edge_mask, image.shape[:2])
     edge_details = {}
-    edges_data_legacy = {} # For backward compatibility
+    edges_data_legacy = {}  # For backward compatibility
     
     for edge_name, edge_specific_mask in edge_masks.items():
-        pct, white_px, tot_px = analyze_whitening_in_region(image, edge_specific_mask)
+        if card_side == "back":
+            pct, white_px, tot_px = analyze_whitening_in_region(image, edge_specific_mask)
+        else:
+            pct, white_px, tot_px = analyze_whitening_for_front(image, edge_specific_mask)
+        
         score = score_whitening_percentage(pct)
         
         edge_details[edge_name] = {
@@ -269,10 +354,10 @@ def analyze_edge_wear(
         # Backward compatibility format
         edges_data_legacy[edge_name] = {"score": round(score, 1)}
     
-    # Overall score (use worst edge vs average?)
-    # Spec says "Worst Case" driven.
+    # Overall score - worst edge driven
     worst_edge_score = min(details['score'] for details in edge_details.values())
     overall_whitening_score = score_whitening_percentage(whitening_pct)
+
     
     # Weighted final: heavy weight on worst edge
     final_score = min(overall_whitening_score, worst_edge_score)

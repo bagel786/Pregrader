@@ -105,8 +105,10 @@ def analyze_corner_wear(image_path: str) -> dict:
         results = {}
         corner_names = ["top_left", "top_right", "bottom_right", "bottom_left"]
         
-        roi_size = 60 
+        # Get image dimensions first
         h, w = image.shape[:2]
+        # Resolution-independent ROI: 4% of card dimension (min 30px for very small images)
+        roi_size = max(30, int(min(h, w) * 0.04))
 
         for i, (pt_x, pt_y) in enumerate(ordered_pts):
             pt_x, pt_y = int(pt_x), int(pt_y)

@@ -480,7 +480,247 @@ async def delete_session(session_id: str):
     return {"status": "deleted", "session_id": session_id}
 
 
+# =============================================================================
+# NEW SESSION-BASED GRADING API (Front + Back Workflow)
+# =============================================================================
+
+from api.session_manager import get_session_manager
+from api.combined_grading import analyze_single_side, combine_front_back_analysis
+
+# Initialize session manager
+session_manager = get_session_manager(UPLOAD_DIR)
+
+
+@app.post("/api/grading/start")
+async def start_grading_session():
+    """
+    Start a new grading session for front + back photo workflow.
+    
+    Returns:
+        Session ID and status for tracking the grading process
+    """
+    try:
+        session = session_manager.create_session()
+        logger.info(f"Started new grading session: {session.session_id}")
+        
+        return {
+            "session_id": session.session_id,
+            "status": "created",
+            "message": "Session created. Upload front image first.",
+            "next_step": "/api/grading/{session_id}/upload-front"
+        }
+    except Exception as e:
+        logger.error(f"Failed to create session: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to create session: {str(e)}")
+
+
+@app.post("/api/grading/{session_id}/upload-front")
+async def upload_front_image(
+    session_id: str,
+    image: UploadFile = File(..., description="Front side of the Pokemon card")
+):
+    """
+    Upload and analyze the front image of a card.
+    
+    Args:
+        session_id: The session ID from start_grading_session
+        image: Front image file
+        
+    Returns:
+        Front analysis results and next step instructions
+    """
+    session = session_manager.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found or expired")
+    
+    try:
+        # Save front image
+        session_dir = session_manager.get_session_dir(session_id)
+        front_path = session_dir / f"front_{image.filename}"
+        
+        with open(front_path, "wb") as f:
+            shutil.copyfileobj(image.file, f)
+        
+        # Quality check
+        quality_result = check_image_quality(str(front_path))
+        if not quality_result.get("can_analyze", False):
+            # Clean up bad image
+            front_path.unlink(missing_ok=True)
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "Image quality too low",
+                    "issues": quality_result.get("issues", []),
+                    "user_feedback": quality_result.get("user_feedback", ["Please retake the photo"])
+                }
+            )
+        
+        # Run front analysis
+        front_analysis = analyze_single_side(str(front_path), "front")
+        
+        # Update session
+        session_manager.update_session(
+            session_id,
+            front_image_path=str(front_path),
+            front_analysis=front_analysis,
+            status="front_uploaded"
+        )
+        
+        logger.info(f"Front image uploaded for session: {session_id}")
+        
+        return {
+            "session_id": session_id,
+            "status": "front_uploaded",
+            "front_analysis_preview": {
+                "centering": front_analysis.get("centering", {}).get("grade_estimate"),
+                "surface": front_analysis.get("surface", {}).get("surface", {}).get("score"),
+                "corners": front_analysis.get("corners", {}).get("overall_grade"),
+                "edges": front_analysis.get("edges", {}).get("score"),
+                "detected_as": front_analysis.get("detected_as")
+            },
+            "image_quality": quality_result,
+            "message": "Front image analyzed. Upload back image to complete grading.",
+            "next_step": f"/api/grading/{session_id}/upload-back"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Front upload failed for session {session_id}: {str(e)}")
+        session_manager.update_session(session_id, status="error", error_message=str(e))
+        raise HTTPException(status_code=500, detail=f"Front image analysis failed: {str(e)}")
+
+
+@app.post("/api/grading/{session_id}/upload-back")
+async def upload_back_image(
+    session_id: str,
+    image: UploadFile = File(..., description="Back side of the Pokemon card")
+):
+    """
+    Upload and analyze the back image, then combine with front for final grade.
+    
+    Args:
+        session_id: The session ID
+        image: Back image file
+        
+    Returns:
+        Combined grading results
+    """
+    session = session_manager.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found or expired")
+    
+    if not session.front_analysis:
+        raise HTTPException(status_code=400, detail="Front image not uploaded. Upload front first.")
+    
+    try:
+        # Save back image
+        session_dir = session_manager.get_session_dir(session_id)
+        back_path = session_dir / f"back_{image.filename}"
+        
+        with open(back_path, "wb") as f:
+            shutil.copyfileobj(image.file, f)
+        
+        # Quality check
+        quality_result = check_image_quality(str(back_path))
+        if not quality_result.get("can_analyze", False):
+            back_path.unlink(missing_ok=True)
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "Back image quality too low",
+                    "issues": quality_result.get("issues", []),
+                    "user_feedback": quality_result.get("user_feedback", ["Please retake the photo"])
+                }
+            )
+        
+        # Run back analysis
+        back_analysis = analyze_single_side(str(back_path), "back")
+        
+        # Combine front + back
+        combined_grade = combine_front_back_analysis(
+            session.front_analysis,
+            back_analysis
+        )
+        
+        # Update session
+        session_manager.update_session(
+            session_id,
+            back_image_path=str(back_path),
+            back_analysis=back_analysis,
+            combined_grade=combined_grade,
+            status="complete"
+        )
+        
+        logger.info(f"Grading complete for session: {session_id}, Grade: {combined_grade.get('grade', {}).get('psa_estimate', 'N/A')}")
+        
+        return {
+            "session_id": session_id,
+            "status": "complete",
+            "grade": combined_grade.get("grade"),
+            "details": {
+                "centering": combined_grade.get("centering"),
+                "corners": combined_grade.get("corners"),
+                "edges": combined_grade.get("edges"),
+                "surface": combined_grade.get("surface")
+            },
+            "warnings": combined_grade.get("warnings", [])
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Back upload failed for session {session_id}: {str(e)}")
+        session_manager.update_session(session_id, status="error", error_message=str(e))
+        raise HTTPException(status_code=500, detail=f"Back image analysis failed: {str(e)}")
+
+
+@app.get("/api/grading/{session_id}/result")
+async def get_grading_result(session_id: str):
+    """
+    Get the cached grading result for a completed session.
+    
+    Args:
+        session_id: The session ID
+        
+    Returns:
+        Final grading results
+    """
+    session = session_manager.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found or expired")
+    
+    if session.status != "complete":
+        return {
+            "session_id": session_id,
+            "status": session.status,
+            "message": f"Grading not complete. Current status: {session.status}",
+            "has_front": session.front_image_path is not None,
+            "has_back": session.back_image_path is not None
+        }
+    
+    return {
+        "session_id": session_id,
+        "status": "complete",
+        "grade": session.combined_grade.get("grade") if session.combined_grade else None,
+        "front_analysis": session.front_analysis,
+        "back_analysis": session.back_analysis,
+        "combined_grade": session.combined_grade
+    }
+
+
+@app.delete("/api/grading/{session_id}")
+async def delete_grading_session(session_id: str):
+    """Delete a grading session and clean up files."""
+    success = session_manager.delete_session(session_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    return {"status": "deleted", "session_id": session_id}
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
+
 
