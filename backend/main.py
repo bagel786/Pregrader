@@ -248,21 +248,18 @@ async def run_analysis(session_id: str):
         # Quality Checks - Front
         front_quality = check_image_quality(front_path)
         if not front_quality["can_analyze"]:
-             raise HTTPException(
+            logger.warning(f"HTTP Exception in analysis - Session ID: {session_id}, Status: 400, Detail: Front image quality too low: {front_quality['issues']}")
+            raise HTTPException(
                 status_code=400, 
                 detail=f"Front image quality too low: {'; '.join(front_quality['issues'])}"
             )
             
-        # Quality Checks - Back
+        # Quality Checks - Back (warn but don't block - just skip back analysis)
         if back_path:
             back_quality = check_image_quality(back_path)
             if not back_quality["can_analyze"]:
-                # Warn but maybe convert to single-sided analysis if back is bad?
-                # For strictness, let's fail.
-                raise HTTPException(
-                    status_code=400, 
-                    detail=f"Back image quality too low: {'; '.join(back_quality['issues'])}"
-                )
+                logger.warning(f"Back image quality too low for session {session_id}: {back_quality['issues']} - proceeding with front only")
+                back_path = None  # Skip back analysis instead of failing
         
         # Analyze front image with error handling
         try:
