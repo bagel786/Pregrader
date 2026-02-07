@@ -3,7 +3,7 @@ Improved centering analysis with robust card detection.
 """
 import cv2
 import numpy as np
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 from .vision.image_preprocessing import (
     find_card_contour,
     get_card_corners,
@@ -68,6 +68,81 @@ def detect_inner_artwork_box(image: np.ndarray) -> Optional[np.ndarray]:
     
     # Return largest valid box (likely the artwork frame)
     return max(valid_boxes, key=lambda box: box[2] * box[3])
+
+
+def detect_border_widths(image: np.ndarray) -> Tuple[float, float, float, float]:
+    """
+    Fallback centering detection using border color analysis.
+    
+    Measures the colored border width on each side by detecting
+    where the saturated border color ends and artwork begins.
+    Works better for holographic and full-art cards.
+    
+    Args:
+        image: Perspective-corrected card image
+        
+    Returns:
+        Tuple of (left, right, top, bottom) border widths
+    """
+    h, w = image.shape[:2]
+    
+    # Convert to HSV to detect saturated (colored) borders
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    saturation = hsv[:, :, 1]
+    
+    # Borders are typically saturated (yellow, blue, etc.)
+    # Threshold to find saturated regions
+    _, border_mask = cv2.threshold(saturation, 60, 255, cv2.THRESH_BINARY)
+    
+    # Sample from center of each edge to find where border ends
+    # Left border: scan from left edge toward center
+    left_width = 0
+    for x in range(min(w // 4, 100)):  # Don't scan more than 1/4 of width
+        col = border_mask[:, x]
+        # If less than 60% of column is saturated, we've exited the border
+        if np.mean(col) < 150:  # 255 * 0.6 ≈ 153
+            left_width = x
+            break
+    else:
+        left_width = w // 20  # Fallback: assume 5% border
+    
+    # Right border: scan from right edge toward center
+    right_width = 0
+    for x in range(w - 1, max(w - w // 4, w - 100), -1):
+        col = border_mask[:, x]
+        if np.mean(col) < 150:
+            right_width = w - 1 - x
+            break
+    else:
+        right_width = w // 20
+    
+    # Top border: scan from top edge toward center
+    top_width = 0
+    for y in range(min(h // 4, 100)):
+        row = border_mask[y, :]
+        if np.mean(row) < 150:
+            top_width = y
+            break
+    else:
+        top_width = h // 20
+    
+    # Bottom border: scan from bottom edge toward center  
+    bottom_width = 0
+    for y in range(h - 1, max(h - h // 4, h - 100), -1):
+        row = border_mask[y, :]
+        if np.mean(row) < 150:
+            bottom_width = h - 1 - y
+            break
+    else:
+        bottom_width = h // 20
+    
+    # Ensure minimum border width (at least 2% of dimension)
+    left_width = max(left_width, w * 0.02)
+    right_width = max(right_width, w * 0.02)
+    top_width = max(top_width, h * 0.02)
+    bottom_width = max(bottom_width, h * 0.02)
+    
+    return left_width, right_width, top_width, bottom_width
 
 
 def calculate_centering_score(
@@ -158,22 +233,21 @@ def calculate_centering_ratios(
     
     # Detect inner artwork box
     artwork_box = detect_inner_artwork_box(corrected)
-    if artwork_box is None:
-        return {
-            "success": False,
-            "error": "Could not detect artwork box",
-            "score": 6.0, # Slight penalty but don't fail hard
-            "grade_estimate": 6.0
-        }
     
-    x, y, w, h = artwork_box
     img_height, img_width = corrected.shape[:2]
+    detection_method = "artwork_box"
     
-    # Calculate border widths
-    left = x
-    right = img_width - (x + w)
-    top = y
-    bottom = img_height - (y + h)
+    if artwork_box is not None:
+        # Primary method: use artwork box boundaries
+        x, y, w, h = artwork_box
+        left = x
+        right = img_width - (x + w)
+        top = y
+        bottom = img_height - (y + h)
+    else:
+        # Fallback: use border color detection (better for holo/full-art cards)
+        detection_method = "border_detection"
+        left, right, top, bottom = detect_border_widths(corrected)
     
     # Calculate score
     score = calculate_centering_score(left, right, top, bottom)
@@ -205,7 +279,8 @@ def calculate_centering_ratios(
     return {
         "success": True,
         "score": round(score, 1),
-        "grade_estimate": round(score, 1), # Backward compatibility
+        "grade_estimate": round(score, 1),  # Backward compatibility
+        "detection_method": detection_method,
         "measurements": {
             "left_px": left,
             "right_px": right,
@@ -214,6 +289,6 @@ def calculate_centering_ratios(
             "left_right_ratio": f"{left_pct:.1f}/{right_pct:.1f}",
             "top_bottom_ratio": f"{top_pct:.1f}/{bottom_pct:.1f}"
         },
-        "confidence": 1.0 if score > 3.0 else 0.5
+        "confidence": 0.9 if detection_method == "artwork_box" else 0.7
     }
 
