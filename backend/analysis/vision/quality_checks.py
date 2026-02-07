@@ -145,7 +145,7 @@ def check_image_quality(image_path: str) -> Dict:
     
     # Check resolution
     height, width = image.shape[:2]
-    min_resolution = 480  # Minimum width or height (lowered for mobile photos)
+    min_resolution = 400  # Minimum width or height (very lenient for mobile)
     
     # Calculate metrics
     blur_score = calculate_blur_score(image)
@@ -162,10 +162,10 @@ def check_image_quality(image_path: str) -> Dict:
         issues.append(f"Low resolution: {width}x{height} (minimum {min_resolution}px)")
         user_feedback.append("Image resolution too low - move camera closer or use higher quality setting")
     
-    if blur_score < 70:
+    if blur_score < 50:
         issues.append(f"Image too blurry (score: {blur_score:.1f})")
         user_feedback.append("Image is blurry - hold camera steady and tap to focus")
-    elif blur_score < 150:
+    elif blur_score < 100:
         warnings.append(f"Image slightly blurry (score: {blur_score:.1f})")
     
     if brightness < 40:
