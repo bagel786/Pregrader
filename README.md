@@ -228,6 +228,7 @@ The backend is configured for Railway deployment:
 
 - **iOS**: TestFlight or App Store via Xcode
 - **Android**: Google Play Console or direct APK distribution
+- App has not been published to stores yet, updates coming soon!
 
 ## Troubleshooting
 
