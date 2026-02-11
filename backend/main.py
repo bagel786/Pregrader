@@ -19,6 +19,9 @@ from analysis.scoring import GradingEngine
 from analysis.vision.quality_checks import check_image_quality
 from analysis.vision.debug import DebugVisualizer
 
+# Import enhanced detection router
+from api.enhanced_detection import router as enhanced_router
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -47,6 +50,13 @@ app.add_middleware(
 # Initialize the Pokemon TCG client
 pokemon_client = PokemonTCGClient()
 ENABLE_DEBUG = os.getenv("ENABLE_DEBUG", "false").lower() == "true"
+
+# Register enhanced detection router (v2 API with hybrid detection)
+app.include_router(
+    enhanced_router,
+    prefix="/api/v2",
+    tags=["enhanced-detection"]
+)
 
 
 @app.get("/health")

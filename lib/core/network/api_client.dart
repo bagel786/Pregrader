@@ -31,6 +31,15 @@ class ApiClient {
   }
 
   String _getBaseUrl() {
+    // Production URL (Railway)
+    const productionUrl = 'https://pregrader-production.up.railway.app';
+    
+    // Use production in release mode
+    if (kReleaseMode) {
+      return productionUrl;
+    }
+    
+    // Development URLs
     if (kIsWeb) return 'http://localhost:8000';
 
     if (Platform.isAndroid) {
@@ -38,7 +47,7 @@ class ApiClient {
       return 'http://10.0.2.2:8000';
     } else if (Platform.isIOS) {
       // Use LAN IP for Physical Device to access backend
-      // TODO: Replace with hosted URL for production
+      // For production, this will use Railway URL
       return 'http://192.168.68.159:8000';
     }
 
