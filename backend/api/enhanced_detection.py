@@ -312,6 +312,30 @@ async def upload_front_hybrid(
             status_code=500,
             detail=f"Detection failed: {str(e)}"
         )
+@router.post("/grading/start")
+async def start_grading_session_v2():
+    """
+    Start a new grading session for v2 API
+
+    Returns:
+        Session ID and status for tracking the grading process
+    """
+    try:
+        session = session_manager.create_session()
+        logger.info(f"[{session.session_id}] Started new v2 grading session")
+
+        return {
+            "session_id": session.session_id,
+            "status": "created",
+            "message": "Session created. Upload front image first.",
+            "next_step": f"/api/v2/grading/{session.session_id}/upload-front"
+        }
+    except Exception as e:
+        logger.error(f"Failed to create v2 session: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to create session: {str(e)}")
+
+
+
 
 
 @router.post("/grading/{session_id}/upload-back")
@@ -323,6 +347,46 @@ async def upload_back_hybrid(
     # Similar implementation to upload_front_hybrid
     # ... (abbreviated for brevity, follows same pattern)
     pass
+@router.get("/grading/{session_id}/result")
+async def get_grading_result_v2(session_id: str):
+    """
+    Get the final grading result for a completed session
+
+    Args:
+        session_id: The session ID
+
+    Returns:
+        Final grading results with all analysis data
+    """
+    logger.info(f"[{session_id}] Getting grading result")
+
+    session = session_manager.get_session(session_id)
+    if not session:
+        logger.error(f"[{session_id}] Session not found")
+        raise HTTPException(status_code=404, detail="Session not found or expired")
+
+    if session.status != "complete":
+        logger.warning(f"[{session_id}] Grading not complete, status: {session.status}")
+        return {
+            "session_id": session_id,
+            "status": session.status,
+            "message": f"Grading not complete. Current status: {session.status}",
+            "has_front": session.front_image_path is not None,
+            "has_back": session.back_image_path is not None
+        }
+
+    logger.info(f"[{session_id}] Returning complete grading result")
+    return {
+        "session_id": session_id,
+        "status": "complete",
+        "grade": session.combined_grade.get("grade") if session.combined_grade else None,
+        "front_analysis": session.front_analysis,
+        "back_analysis": session.back_analysis,
+        "combined_grade": session.combined_grade
+    }
+
+
+
 
 
 # ============================================================================
