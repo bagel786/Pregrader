@@ -118,7 +118,6 @@ async def health_check():
     }
     logger.info(f"Health check response: {health_status}")
     return health_status
-    }
 
 
 @app.get("/cards/search")
