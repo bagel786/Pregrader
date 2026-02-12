@@ -18,8 +18,12 @@ import time
 import os
 import json
 import io
+import logging
 from typing import Optional, Dict
 from datetime import datetime, timedelta
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 # Your existing imports
 from api.session_manager import get_session_manager
@@ -36,6 +40,8 @@ router = APIRouter()
 # Get session manager instance
 session_manager = get_session_manager()
 
+logger.info("Enhanced detection module loaded")
+
 
 # ============================================================================
 # CONFIGURATION
@@ -50,6 +56,11 @@ class DetectionConfig:
     DEBUG_RETENTION_HOURS = int(os.getenv('DEBUG_IMAGE_RETENTION_HOURS', '24'))
     MAX_CONCURRENT_AI = int(os.getenv('MAX_CONCURRENT_AI_REQUESTS', '5'))
     AI_TIMEOUT = int(os.getenv('AI_TIMEOUT_SECONDS', '30'))
+
+logger.info(f"Detection Config: method={DetectionConfig.DEFAULT_METHOD}, "
+           f"threshold={DetectionConfig.OPENCV_THRESHOLD}, "
+           f"debug={DetectionConfig.ENABLE_DEBUG}, "
+           f"ai_timeout={DetectionConfig.AI_TIMEOUT}s")
 
 
 # Track concurrent AI requests
@@ -74,8 +85,12 @@ async def upload_front_hybrid(
     3. Save debug images showing what was detected
     4. Use enhanced corner detection (fewer false positives)
     """
+    logger.info(f"[{session_id}] Upload front image started")
+    logger.info(f"[{session_id}] File: {file.filename}, Content-Type: {file.content_type}")
+    
     session = session_manager.get_session(session_id)
     if not session:
+        logger.error(f"[{session_id}] Session not found")
         raise HTTPException(status_code=404, detail="Session not found")
     
     # Save uploaded file
@@ -83,8 +98,12 @@ async def upload_front_hybrid(
     file_path.parent.mkdir(parents=True, exist_ok=True)
     
     content = await file.read()
+    logger.info(f"[{session_id}] File size: {len(content)} bytes")
+    
     with open(file_path, "wb") as f:
         f.write(content)
+    
+    logger.info(f"[{session_id}] File saved to {file_path}")
     
     start_time = time.time()
     detection_log = {
@@ -95,7 +114,10 @@ async def upload_front_hybrid(
     
     # DETECTION PIPELINE
     try:
+        logger.info(f"[{session_id}] Starting detection pipeline")
+        
         # Step 1: Try OpenCV first (fast path)
+        logger.info(f"[{session_id}] Attempting OpenCV detection...")
         opencv_result = await _try_opencv_detection(str(file_path), session_id)
         opencv_time = time.time() - start_time
         
@@ -104,8 +126,13 @@ async def upload_front_hybrid(
         detection_log["opencv_success"] = opencv_result["success"]
         detection_log["opencv_confidence"] = opencv_result.get("confidence", 0)
         
+        logger.info(f"[{session_id}] OpenCV result: success={opencv_result['success']}, "
+                   f"confidence={opencv_result.get('confidence', 0):.2f}, "
+                   f"time={opencv_time*1000:.0f}ms")
+        
         if opencv_result["success"] and opencv_result["confidence"] >= DetectionConfig.OPENCV_THRESHOLD:
             # High confidence OpenCV - use it
+            logger.info(f"[{session_id}] Using OpenCV result (confidence above threshold)")
             corrected = opencv_result["corrected_image"]
             method = f"opencv_{opencv_result['method']}"
             confidence = opencv_result["confidence"]
@@ -115,15 +142,19 @@ async def upload_front_hybrid(
             
         else:
             # Low confidence or failed - use Vision AI
+            logger.info(f"[{session_id}] OpenCV confidence too low, falling back to Vision AI...")
+            
             async with _ai_semaphore:  # Limit concurrent AI requests
                 ai_start = time.time()
                 
                 try:
+                    logger.info(f"[{session_id}] Initializing Vision AI detector...")
                     detector = VisionAIDetector(
                         provider=DetectionConfig.VISION_AI_PROVIDER,
                         timeout=DetectionConfig.AI_TIMEOUT
                     )
                     
+                    logger.info(f"[{session_id}] Calling Vision AI API...")
                     ai_result = await detector.hybrid_detection(str(file_path))
                     ai_time = time.time() - ai_start
                     
@@ -131,7 +162,11 @@ async def upload_front_hybrid(
                     detection_log["ai_time_ms"] = int(ai_time * 1000)
                     detection_log["ai_confidence"] = ai_result.get("confidence", 0)
                     
+                    logger.info(f"[{session_id}] Vision AI result: confidence={ai_result.get('confidence', 0):.2f}, "
+                               f"time={ai_time*1000:.0f}ms")
+                    
                     if ai_result["final_corners"] and ai_result["confidence"] > 0.7:
+                        logger.info(f"[{session_id}] Applying perspective correction...")
                         corrected = detector.apply_perspective_correction(
                             str(file_path),
                             ai_result["final_corners"]
@@ -141,16 +176,20 @@ async def upload_front_hybrid(
                         quality_assessment = ai_result.get("llm_result", {}).get("quality_assessment")
                         
                         detection_log["final_method"] = "hybrid_ai"
+                        logger.info(f"[{session_id}] Successfully corrected image using AI")
                         
                     else:
+                        logger.error(f"[{session_id}] AI confidence too low: {ai_result.get('confidence', 0)}")
                         raise Exception(f"AI confidence too low: {ai_result.get('confidence', 0)}")
                         
                 except asyncio.TimeoutError:
+                    logger.error(f"[{session_id}] AI detection timeout after {DetectionConfig.AI_TIMEOUT}s")
                     raise HTTPException(
                         status_code=408,
                         detail=f"Detection timeout after {DetectionConfig.AI_TIMEOUT}s"
                     )
                 except Exception as e:
+                    logger.error(f"[{session_id}] AI detection failed: {str(e)}")
                     detection_log["ai_error"] = str(e)
                     
                     # Both failed - return helpful error
@@ -177,18 +216,38 @@ async def upload_front_hybrid(
         total_time = time.time() - start_time
         detection_log["total_time_ms"] = int(total_time * 1000)
         
+        logger.info(f"[{session_id}] Detection complete: method={method}, "
+                   f"confidence={confidence:.2f}, total_time={total_time*1000:.0f}ms")
+        
         # Save corrected image
         corrected_path = Path(f"temp_uploads/{session_id}/front_corrected.jpg")
         cv2.imwrite(str(corrected_path), corrected)
+        logger.info(f"[{session_id}] Corrected image saved")
         
         # ANALYSIS PIPELINE (with enhanced corner detection)
+        logger.info(f"[{session_id}] Starting analysis pipeline...")
+        
+        logger.info(f"[{session_id}] Analyzing centering...")
         centering_result = calculate_centering_ratios(str(corrected_path))
+        
+        logger.info(f"[{session_id}] Analyzing corners (enhanced)...")
         corners_result = analyze_corners_enhanced(corrected, side="front", debug=DetectionConfig.ENABLE_DEBUG)
+        
+        logger.info(f"[{session_id}] Analyzing edges...")
         edges_result = analyze_edge_wear(str(corrected_path))
+        
+        logger.info(f"[{session_id}] Analyzing surface...")
         surface_result = analyze_surface_damage(str(corrected_path))
+        
+        logger.info(f"[{session_id}] Analysis complete: "
+                   f"centering={centering_result.get('score', 0):.1f}, "
+                   f"corners={corners_result.get('overall_grade', 0):.1f}, "
+                   f"edges={edges_result.get('score', 0):.1f}, "
+                   f"surface={surface_result.get('score', 0):.1f}")
         
         # Save debug visualization
         if DetectionConfig.ENABLE_DEBUG:
+            logger.info(f"[{session_id}] Generating debug visualization...")
             await _save_debug_visualization(
                 session_id,
                 str(file_path),
@@ -202,6 +261,7 @@ async def upload_front_hybrid(
                     "surface": surface_result
                 }
             )
+            logger.info(f"[{session_id}] Debug visualization saved")
         
         # Update session
         session["state"] = "front_uploaded"
@@ -218,6 +278,8 @@ async def upload_front_hybrid(
         
         # Log detection
         _log_detection(detection_log)
+        
+        logger.info(f"[{session_id}] Upload front complete successfully")
         
         return {
             "success": True,
@@ -242,6 +304,7 @@ async def upload_front_hybrid(
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"[{session_id}] Detection failed with exception: {str(e)}", exc_info=True)
         detection_log["error"] = str(e)
         _log_detection(detection_log)
         
@@ -582,8 +645,7 @@ _detection_stats = {
 
 def _log_detection(log_entry: Dict):
     """Log detection for monitoring"""
-    import logging
-    logger = logging.getLogger(__name__)
+    logger.info(f"DETECTION_LOG: {json.dumps(log_entry)}")
     
     # Update stats
     _detection_stats["total"] += 1
@@ -596,9 +658,6 @@ def _log_detection(log_entry: Dict):
         _detection_stats["failures"] += 1
     
     _detection_stats["total_time_ms"] += log_entry.get("total_time_ms", 0)
-    
-    # Log to file/console
-    logger.info(f"Detection: {json.dumps(log_entry)}")
 
 
 @router.get("/admin/detection-stats")
@@ -606,10 +665,12 @@ async def get_detection_stats():
     """Get detection statistics"""
     total = _detection_stats["total"]
     
+    logger.info(f"Detection stats requested: {_detection_stats}")
+    
     if total == 0:
         return {"message": "No detections yet"}
     
-    return {
+    stats = {
         "total_detections": total,
         "success_rate": (_detection_stats["opencv_success"] + _detection_stats["ai_success"]) / total,
         "method_usage": {
@@ -618,6 +679,9 @@ async def get_detection_stats():
         },
         "avg_processing_time_ms": _detection_stats["total_time_ms"] / total
     }
+    
+    logger.info(f"Returning stats: {stats}")
+    return stats
 
 
 # Cleanup old debug files

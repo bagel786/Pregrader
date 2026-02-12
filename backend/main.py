@@ -8,6 +8,8 @@ import shutil
 from pathlib import Path
 from typing import Optional
 import logging
+import sys
+from datetime import datetime
 
 from services.pokemon_tcg import PokemonTCGClient
 from analysis.centering import calculate_centering_ratios
@@ -22,21 +24,41 @@ from analysis.vision.debug import DebugVisualizer
 # Import enhanced detection router
 from api.enhanced_detection import router as enhanced_router
 
-# Configure logging
+# Configure comprehensive logging
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    format='%(asctime)s - %(name)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler('server.log')
+    ]
 )
 logger = logging.getLogger(__name__)
+
+# Log startup
+logger.info("="*60)
+logger.info("Pokemon Pregrader Backend Starting")
+logger.info(f"Python Version: {sys.version}")
+logger.info(f"Working Directory: {os.getcwd()}")
+logger.info("="*60)
 
 # Load environment variables
 load_dotenv()
 
+# Log environment configuration
+logger.info("Environment Configuration:")
+logger.info(f"  ANTHROPIC_API_KEY: {'SET' if os.getenv('ANTHROPIC_API_KEY') else 'NOT SET'}")
+logger.info(f"  DEFAULT_DETECTION_METHOD: {os.getenv('DEFAULT_DETECTION_METHOD', 'hybrid')}")
+logger.info(f"  OPENCV_CONFIDENCE_THRESHOLD: {os.getenv('OPENCV_CONFIDENCE_THRESHOLD', '0.70')}")
+logger.info(f"  ENABLE_DEBUG_IMAGES: {os.getenv('ENABLE_DEBUG_IMAGES', 'true')}")
+
 app = FastAPI(
     title="Pokemon Pregrader API",
-    description="Backend API for Pokemon card pre-grading application",
-    version="1.0.0"
+    description="Backend API for Pokemon card pre-grading application with hybrid AI detection",
+    version="2.0.0"
 )
+
+logger.info("FastAPI app initialized")
 
 # Configure CORS for Flutter app access
 app.add_middleware(
@@ -47,9 +69,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+logger.info("CORS middleware configured")
+
 # Initialize the Pokemon TCG client
 pokemon_client = PokemonTCGClient()
 ENABLE_DEBUG = os.getenv("ENABLE_DEBUG", "false").lower() == "true"
+
+logger.info(f"Pokemon TCG client initialized")
+logger.info(f"Debug mode: {ENABLE_DEBUG}")
 
 # Register enhanced detection router (v2 API with hybrid detection)
 app.include_router(
@@ -58,16 +85,29 @@ app.include_router(
     tags=["enhanced-detection"]
 )
 
+logger.info("Enhanced detection router registered at /api/v2")
+logger.info("Backend initialization complete")
+logger.info("="*60)
+
 
 @app.get("/health")
 async def health_check():
     """Health check endpoint."""
     logger.info("Health check called")
-    return {
+    health_status = {
         "status": "ok", 
         "message": "Backend is running",
-        "version": "2.1.0",  # Updated version to verify deployment
-        "timestamp": "2026-02-05T15:35:00Z"
+        "version": "2.0.0",
+        "timestamp": datetime.now().isoformat(),
+        "features": {
+            "hybrid_detection": True,
+            "enhanced_corners": True,
+            "visual_debugging": True,
+            "ai_enabled": bool(os.getenv("ANTHROPIC_API_KEY"))
+        }
+    }
+    logger.info(f"Health check response: {health_status}")
+    return health_status
     }
 
 
