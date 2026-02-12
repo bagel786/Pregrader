@@ -21,17 +21,7 @@ from analysis.scoring import GradingEngine
 from analysis.vision.quality_checks import check_image_quality
 from analysis.vision.debug import DebugVisualizer
 
-# Import enhanced detection router
-try:
-    from api.enhanced_detection import router as enhanced_router
-    enhanced_router_available = True
-    logger.info("Enhanced detection router imported successfully")
-except Exception as e:
-    logger.warning(f"Enhanced detection router import failed: {e}")
-    logger.warning("V2 API will not be available")
-    enhanced_router_available = False
-
-# Configure comprehensive logging
+# Configure comprehensive logging FIRST (before any imports that use logger)
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s',
@@ -41,6 +31,16 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
+
+# Import enhanced detection router
+try:
+    from api.enhanced_detection import router as enhanced_router
+    enhanced_router_available = True
+    logger.info("Enhanced detection router imported successfully")
+except Exception as e:
+    logger.warning(f"Enhanced detection router import failed: {e}")
+    logger.warning("V2 API will not be available")
+    enhanced_router_available = False
 
 # Log startup
 logger.info("="*60)
