@@ -22,7 +22,14 @@ from analysis.vision.quality_checks import check_image_quality
 from analysis.vision.debug import DebugVisualizer
 
 # Import enhanced detection router
-from api.enhanced_detection import router as enhanced_router
+try:
+    from api.enhanced_detection import router as enhanced_router
+    enhanced_router_available = True
+    logger.info("Enhanced detection router imported successfully")
+except Exception as e:
+    logger.warning(f"Enhanced detection router import failed: {e}")
+    logger.warning("V2 API will not be available")
+    enhanced_router_available = False
 
 # Configure comprehensive logging
 logging.basicConfig(
@@ -79,13 +86,16 @@ logger.info(f"Pokemon TCG client initialized")
 logger.info(f"Debug mode: {ENABLE_DEBUG}")
 
 # Register enhanced detection router (v2 API with hybrid detection)
-app.include_router(
-    enhanced_router,
-    prefix="/api/v2",
-    tags=["enhanced-detection"]
-)
+if enhanced_router_available:
+    app.include_router(
+        enhanced_router,
+        prefix="/api/v2",
+        tags=["enhanced-detection"]
+    )
+    logger.info("Enhanced detection router registered at /api/v2")
+else:
+    logger.warning("Enhanced detection router not registered - V2 API unavailable")
 
-logger.info("Enhanced detection router registered at /api/v2")
 logger.info("Backend initialization complete")
 logger.info("="*60)
 

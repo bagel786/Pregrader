@@ -35,7 +35,11 @@ class VisionAIDetector:
         self.timeout = timeout
         
         if not self.api_key:
-            raise ValueError("ANTHROPIC_API_KEY not set")
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning("ANTHROPIC_API_KEY not set - Vision AI detection will not be available")
+            # Don't raise error, just log warning
+            # This allows the module to import even without API key
     
     async def detect_card_with_llm(self, image_path: str) -> Dict:
         """
@@ -51,6 +55,9 @@ class VisionAIDetector:
                 "quality_assessment": {...}
             }
         """
+        if not self.api_key:
+            raise ValueError("ANTHROPIC_API_KEY not set - cannot use Vision AI detection")
+        
         # Encode image
         with open(image_path, "rb") as f:
             image_data = base64.standard_b64encode(f.read()).decode("utf-8")
