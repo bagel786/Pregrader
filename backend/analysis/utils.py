@@ -222,13 +222,26 @@ def detect_by_color_segmentation(image):
     # Convert to LAB color space (better for color differentiation)
     lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
     
-    # Apply K-means clustering to separate foreground/background
-    pixels = lab.reshape(-1, 3).astype(np.float32)
-    criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 100, 0.2)
-    _, labels, centers = cv2.kmeans(pixels, 3, None, criteria, 10, cv2.KMEANS_PP_CENTERS)
+    # Downsize for K-means to reduce memory (K-means is O(n) on pixel count)
+    h, w = lab.shape[:2]
+    max_dim = 1500
+    if max(h, w) > max_dim:
+        scale = max_dim / max(h, w)
+        lab_small = cv2.resize(lab, None, fx=scale, fy=scale)
+    else:
+        lab_small = lab
     
-    # Reshape labels back to image dimensions
-    labels = labels.reshape(image.shape[:2])
+    # Apply K-means clustering to separate foreground/background
+    pixels = lab_small.reshape(-1, 3).astype(np.float32)
+    criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 50, 0.5)
+    _, labels, centers = cv2.kmeans(pixels, 3, None, criteria, 5, cv2.KMEANS_PP_CENTERS)
+    
+    # Scale labels back to original image dimensions
+    labels_small = labels.reshape(lab_small.shape[:2])
+    if lab_small.shape[:2] != lab.shape[:2]:
+        labels = cv2.resize(labels_small.astype(np.uint8), (w, h), interpolation=cv2.INTER_NEAREST).astype(np.int32)
+    else:
+        labels = labels_small
     
     # Find the cluster that represents the card (largest coherent region)
     best_contour = None

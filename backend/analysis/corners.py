@@ -2,45 +2,48 @@ import cv2
 import numpy as np
 from .utils import find_card_contour, order_points
 
-def _calculate_corner_score_smooth(whitening_pixels):
+def _calculate_corner_score_smooth(whitening_percentage):
     """
     Calculate corner score with smooth interpolation.
     
     Args:
-        whitening_pixels: Number of white pixels detected in corner
+        whitening_percentage: Percentage of white pixels in corner ROI (0-100)
     
     Returns:
         Score between 1.0 and 10.0
     """
-    # Recalibrated thresholds (pixels, score)
+    # Resolution-independent thresholds (percentage of ROI area, score)
     thresholds = [
-        (0, 10.0),      # Perfect
-        (10, 10.0),     # Near perfect
-        (30, 9.5),      # Excellent
-        (75, 9.0),      # Very good
-        (150, 8.5),     # Good
-        (300, 8.0),     # Fair
-        (500, 7.0),     # Acceptable
-        (float('inf'), 6.0),  # Worn
+        (0.0, 10.0),     # Perfect
+        (0.5, 10.0),     # Near perfect
+        (1.5, 9.5),      # Excellent
+        (3.0, 9.0),      # Very good
+        (5.0, 8.5),      # Good
+        (8.0, 8.0),      # Fair
+        (12.0, 7.0),     # Acceptable
+        (18.0, 6.0),     # Worn
+        (25.0, 5.0),     # Heavy wear
+        (35.0, 4.0),     # Severe
+        (float('inf'), 3.0),  # Destroyed
     ]
     
     # Linear interpolation
     for i in range(len(thresholds) - 1):
-        lower_px, upper_score = thresholds[i]
-        upper_px, lower_score = thresholds[i + 1]
+        lower_pct, upper_score = thresholds[i]
+        upper_pct, lower_score = thresholds[i + 1]
         
-        if whitening_pixels <= upper_px:
-            if upper_px == lower_px:
+        if whitening_percentage <= upper_pct:
+            if upper_pct == lower_pct:
                 return upper_score
             
-            px_range = upper_px - lower_px
+            pct_range = upper_pct - lower_pct
             score_range = upper_score - lower_score
-            px_position = (whitening_pixels - lower_px) / px_range if px_range > 0 else 0
+            pct_position = (whitening_percentage - lower_pct) / pct_range if pct_range > 0 else 0
             
-            score = upper_score - (score_range * px_position)
+            score = upper_score - (score_range * pct_position)
             return round(score, 1)
     
-    return 6.0  # Fallback
+    return 3.0  # Fallback for extreme damage
 
 
 def calculate_corner_grade(corner_scores):
@@ -99,7 +102,11 @@ def analyze_corner_wear(image_path: str) -> dict:
             x,y,w,h = cv2.boundingRect(card_approx)
             card_approx = np.array([[x,y], [x+w,y], [x+w,y+h], [x,y+h]], dtype="float32")
         
-        card_pts = card_approx.reshape(4, 2)
+        card_pts = np.squeeze(card_approx)
+        if card_pts.ndim != 2 or card_pts.shape[0] != 4:
+            x, y, w, h = cv2.boundingRect(card_approx)
+            card_pts = np.array([[x, y], [x+w, y], [x+w, y+h], [x, y+h]], dtype="float32")
+        card_pts = card_pts.reshape(4, 2)
         ordered_pts = order_points(card_pts)
 
         results = {}
@@ -132,13 +139,16 @@ def analyze_corner_wear(image_path: str) -> dict:
             
             mask = cv2.inRange(hsv, lower_white, upper_white)
             white_pixels = cv2.countNonZero(mask)
+            total_pixels = roi.shape[0] * roi.shape[1]
             
-            # Scoring with smooth interpolation
-            score = _calculate_corner_score_smooth(white_pixels)
+            # Convert to percentage for resolution-independent scoring
+            whitening_pct = (white_pixels / total_pixels * 100) if total_pixels > 0 else 0.0
+            score = _calculate_corner_score_smooth(whitening_pct)
             
             results[name] = {
                 "score": score,
                 "whitening_pixels": white_pixels,
+                "whitening_pct": round(whitening_pct, 2),
             }
             
         # Calculate overall corner grade and confidence

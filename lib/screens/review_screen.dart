@@ -49,14 +49,36 @@ class _ReviewScreenState extends State<ReviewScreen> {
     try {
       final client = ApiClient();
 
-      // 1. Upload
-      final sessionId = await client.uploadImages(
+      // Show progress feedback
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Analyzing card... This should take 10-20 seconds.'),
+            duration: Duration(seconds: 3),
+            backgroundColor: Colors.blue,
+          ),
+        );
+      }
+
+      // 1. Start session
+      final sessionId = await client.startGradingSession();
+
+      // 2. Upload front image
+      await client.uploadFrontImage(
+        sessionId: sessionId,
         frontImage: _frontFile,
-        backImage: _backFile,
       );
 
-      // 2. Poll/Get Grade
-      final result = await client.getGrade(sessionId);
+      // 3. Upload back if provided
+      if (_backFile != null) {
+        await client.uploadBackImage(
+          sessionId: sessionId,
+          backImage: _backFile!,
+        );
+      }
+
+      // 4. Get grade
+      final result = await client.getGradingResult(sessionId);
 
       if (!mounted) return;
 
@@ -72,19 +94,24 @@ class _ReviewScreenState extends State<ReviewScreen> {
         // Parse error message for better display
         String errorMessage = e.toString();
         String displayError = "Grading Failed";
-        
+
         if (errorMessage.contains("500")) {
-          displayError = "Server Error: The backend encountered an issue processing your card. Please try again.";
+          displayError =
+              "Server Error: The backend encountered an issue processing your card. Please try again.";
         } else if (errorMessage.contains("404")) {
           displayError = "Session not found. Please try uploading again.";
-        } else if (errorMessage.contains("timeout")) {
-          displayError = "Request timed out. Please check your connection and try again.";
-        } else if (errorMessage.contains("SocketException") || errorMessage.contains("Connection")) {
-          displayError = "Cannot connect to server. Please check your internet connection.";
+        } else if (errorMessage.contains("timeout") ||
+            errorMessage.contains("timed out")) {
+          displayError =
+              "Request timed out. The analysis is taking longer than expected. Please try again with better lighting or a clearer photo.";
+        } else if (errorMessage.contains("SocketException") ||
+            errorMessage.contains("Connection")) {
+          displayError =
+              "Cannot connect to server. Please check your internet connection.";
         } else {
           displayError = "Error: $errorMessage";
         }
-        
+
         setState(() {
           _error = displayError;
         });

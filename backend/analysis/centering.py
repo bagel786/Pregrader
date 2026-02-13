@@ -264,14 +264,28 @@ def calculate_centering_ratios(
     # Debug visualization
     if debug_output_path:
         debug_img = corrected.copy()
-        cv2.rectangle(debug_img, (x, y), (x + w, y + h), (0, 255, 0), 2)
+        
+        if artwork_box is not None:
+            cv2.rectangle(debug_img, (x, y), (x + w, y + h), (0, 255, 0), 2)
+        else:
+            # Draw border measurement lines for border_detection method
+            left_int, right_int = int(left), int(right)
+            top_int, bottom_int = int(top), int(bottom)
+            cv2.line(debug_img, (left_int, 0), (left_int, img_height), (0, 255, 0), 1)
+            cv2.line(debug_img, (img_width - right_int, 0), (img_width - right_int, img_height), (0, 255, 0), 1)
+            cv2.line(debug_img, (0, top_int), (img_width, top_int), (0, 255, 0), 1)
+            cv2.line(debug_img, (0, img_height - bottom_int), (img_width, img_height - bottom_int), (0, 255, 0), 1)
         
         # Draw measurements
-        cv2.putText(debug_img, f"L: {left}px", (10, 30),
+        cv2.putText(debug_img, f"L: {left:.0f}px", (10, 30),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
-        cv2.putText(debug_img, f"R: {right}px", (img_width - 100, 30),
+        cv2.putText(debug_img, f"R: {right:.0f}px", (img_width - 120, 30),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
-        cv2.putText(debug_img, f"Score: {score:.1f}", (10, img_height - 10),
+        cv2.putText(debug_img, f"T: {top:.0f}px", (10, 55),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
+        cv2.putText(debug_img, f"B: {bottom:.0f}px", (img_width - 120, 55),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
+        cv2.putText(debug_img, f"Score: {score:.1f} ({detection_method})", (10, img_height - 10),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
         
         cv2.imwrite(debug_output_path, debug_img)

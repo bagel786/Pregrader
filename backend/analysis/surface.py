@@ -118,18 +118,21 @@ def analyze_surface_damage(image_path: str) -> dict:
         major_damage = [c for c in dark_contours if cv2.contourArea(c) > major_damage_threshold] 
         major_damage_detected = len(major_damage) > 0
         
-        # More lenient scoring
+        # Smooth scoring with full range coverage
         score = 10.0
         if scratch_count == 0: score = 10.0
-        elif scratch_count <= 3: score = 9.5
-        elif scratch_count <= 7: score = 9.0
-        elif scratch_count <= 12: score = 8.0
-        elif scratch_count <= 20: score = 7.0
-        else: score = 6.5
+        elif scratch_count <= 2: score = 9.5
+        elif scratch_count <= 5: score = 9.0
+        elif scratch_count <= 10: score = 8.0
+        elif scratch_count <= 18: score = 7.0
+        elif scratch_count <= 28: score = 6.0
+        elif scratch_count <= 40: score = 5.0
+        elif scratch_count <= 60: score = 4.0
+        else: score = 3.0
         
-        # Only apply major damage penalty if really severe
+        # Apply major damage penalty (creases, dents, stains)
         if major_damage_detected:
-            score = min(score, 7.0)
+            score = min(score, 5.0)  # Creases/dents cap at 5
         
         # Calculate confidence based on excluded regions
         glare_pixels = cv2.countNonZero(glare_mask)

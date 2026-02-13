@@ -16,7 +16,7 @@ class GradingSession:
     def __init__(self, session_id: str = None):
         self.session_id = session_id or str(uuid.uuid4())
         self.created_at = datetime.now()
-        self.expires_at = self.created_at + timedelta(hours=1)
+        self.expires_at = self.created_at + timedelta(minutes=15)
         
         # Image paths
         self.front_image_path: Optional[str] = None

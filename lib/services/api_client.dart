@@ -16,14 +16,10 @@ class ApiClient {
   static const String _localIosUrl = "http://192.168.68.103:8000";
   static const String _androidEmulatorUrl = "http://10.0.2.2:8000";
 
-  // API version - use v2 for hybrid detection
-  static const String _apiVersion = "v2";
-
   ApiClient._internal() {
     String baseUrl;
 
     if (kReleaseMode) {
-      // In release mode, always use production Railway URL
       baseUrl = _productionUrl;
     } else if (!kIsWeb && Platform.isAndroid) {
       baseUrl = _androidEmulatorUrl;
@@ -35,7 +31,8 @@ class ApiClient {
       BaseOptions(
         baseUrl: baseUrl,
         connectTimeout: const Duration(seconds: 30),
-        receiveTimeout: const Duration(seconds: 60), // Increased for AI detection
+        receiveTimeout: const Duration(seconds: 60),
+        sendTimeout: const Duration(seconds: 30),
       ),
     );
 
@@ -49,7 +46,7 @@ class ApiClient {
   /// Starts a new grading session
   Future<String> startGradingSession() async {
     try {
-      Response response = await _dio.post("/api/$_apiVersion/grading/start");
+      Response response = await _dio.post("/api/grading/start");
 
       if (response.statusCode == 200) {
         return response.data["session_id"];
@@ -75,7 +72,7 @@ class ApiClient {
       });
 
       Response response = await _dio.post(
-        "/api/$_apiVersion/grading/$sessionId/upload-front",
+        "/api/grading/$sessionId/upload-front",
         data: formData,
       );
 
@@ -103,7 +100,7 @@ class ApiClient {
       });
 
       Response response = await _dio.post(
-        "/api/$_apiVersion/grading/$sessionId/upload-back",
+        "/api/grading/$sessionId/upload-back",
         data: formData,
       );
 
@@ -120,9 +117,7 @@ class ApiClient {
   /// Gets the final grading result
   Future<Map<String, dynamic>> getGradingResult(String sessionId) async {
     try {
-      Response response = await _dio.get(
-        "/api/$_apiVersion/grading/$sessionId/result",
-      );
+      Response response = await _dio.get("/api/grading/$sessionId/result");
 
       if (response.statusCode == 200) {
         return response.data;
@@ -144,36 +139,6 @@ class ApiClient {
     } else {
       baseUrl = _localIosUrl;
     }
-    return "$baseUrl/api/$_apiVersion/debug/$sessionId/visualization";
-  }
-
-  /// Legacy method for backward compatibility
-  @Deprecated('Use startGradingSession, uploadFrontImage, uploadBackImage instead')
-  Future<String> uploadImages({
-    required File frontImage,
-    File? backImage,
-  }) async {
-    try {
-      // Start session
-      String sessionId = await startGradingSession();
-
-      // Upload front
-      await uploadFrontImage(sessionId: sessionId, frontImage: frontImage);
-
-      // Upload back if provided
-      if (backImage != null) {
-        await uploadBackImage(sessionId: sessionId, backImage: backImage);
-      }
-
-      return sessionId;
-    } catch (e) {
-      throw Exception("Upload Error: $e");
-    }
-  }
-
-  /// Legacy method for backward compatibility
-  @Deprecated('Use getGradingResult instead')
-  Future<Map<String, dynamic>> getGrade(String sessionId) async {
-    return await getGradingResult(sessionId);
+    return "$baseUrl/api/debug/$sessionId/visualization";
   }
 }

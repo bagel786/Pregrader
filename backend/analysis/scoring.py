@@ -118,7 +118,7 @@ class GradingEngine:
         
         # 1. Extract Sub-scores
         result.centering_score = centering_score
-        result.centering_confidence = 0.8  # Default if not provided
+        result.centering_confidence = 0.8  # Default — caller can pass actual value
         
         # Corners: Use overall_grade if available, otherwise calculate from individual scores
         if "overall_grade" in corners_data:
@@ -126,10 +126,10 @@ class GradingEngine:
             result.corners_confidence = corners_data.get("confidence", 0.8)
         else:
             corners_scores = [c["score"] for c in corners_data["corners"].values()]
-            result.corners_score = sum(corners_scores) / 4.0
+            result.corners_score = sum(corners_scores) / len(corners_scores) if corners_scores else 5.0
             result.corners_confidence = 0.8
         
-        min_corner = min([c["score"] for c in corners_data["corners"].values()])
+        min_corner = min([c["score"] for c in corners_data["corners"].values()]) if corners_data.get("corners") else result.corners_score
         
         # Edges: Use overall_grade if available
         if "overall_grade" in edges_data:
@@ -137,21 +137,22 @@ class GradingEngine:
             result.edges_confidence = edges_data.get("confidence", 0.8)
         else:
             edges_scores = [e["score"] for e in edges_data["edges"].values()]
-            result.edges_score = sum(edges_scores) / 4.0
+            result.edges_score = sum(edges_scores) / len(edges_scores) if edges_scores else 5.0
             result.edges_confidence = 0.8
         
-        edges_scores = [e["score"] for e in edges_data["edges"].values()]
+        edges_scores = [e["score"] for e in edges_data["edges"].values()] if edges_data.get("edges") else [result.edges_score]
         
         # Surface: Provided score
         result.surface_score = surface_data["score"]
         result.surface_confidence = surface_data.get("confidence", 0.8)
         
-        # 2. Weighted Calculation - Equal weights
+        # 2. PSA-aligned Weighted Calculation
+        # PSA weights corners and edges more heavily than centering and surface
         weighted_score = (
-            result.centering_score * 0.25 +
-            result.corners_score * 0.25 +
-            result.edges_score * 0.25 +
-            result.surface_score * 0.25
+            result.centering_score * 0.20 +
+            result.corners_score * 0.30 +
+            result.edges_score * 0.30 +
+            result.surface_score * 0.20
         )
         
         # 3. Apply Gradual Damage Penalties (not hard caps)
@@ -198,12 +199,12 @@ class GradingEngine:
         
         result.psa_estimate = grade_label
         
-        # 5. Calculate Overall Confidence
+        # 5. Calculate Overall Confidence (PSA-aligned weights)
         result.overall_confidence = (
-            result.centering_confidence * 0.25 +
-            result.corners_confidence * 0.25 +
-            result.edges_confidence * 0.25 +
-            result.surface_confidence * 0.25
+            result.centering_confidence * 0.20 +
+            result.corners_confidence * 0.30 +
+            result.edges_confidence * 0.30 +
+            result.surface_confidence * 0.20
         )
         
         # Determine confidence level

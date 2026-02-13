@@ -4,12 +4,15 @@ from dotenv import load_dotenv
 import httpx
 import os
 import uuid
+import gc
 import shutil
 from pathlib import Path
 from typing import Optional
 import logging
 import sys
-from datetime import datetime
+import asyncio
+import cv2
+from datetime import datetime, timedelta
 
 from services.pokemon_tcg import PokemonTCGClient
 from analysis.centering import calculate_centering_ratios
@@ -211,8 +214,41 @@ async def get_sets():
 UPLOAD_DIR = Path(__file__).parent / "temp_uploads"
 UPLOAD_DIR.mkdir(exist_ok=True)
 
-# In-memory storage for analysis sessions (in production, use Redis/DB)
-analysis_sessions = {}
+# In-memory storage for analysis sessions with TTL
+# Sessions expire after 15 minutes, max 20 sessions to cap memory
+MAX_LEGACY_SESSIONS = 20
+SESSION_TTL_MINUTES = 15
+analysis_sessions = {}  # {session_id: {"front_path": ..., "created_at": datetime, ...}}
+
+
+def _cleanup_legacy_sessions():
+    """Remove expired sessions and enforce max session limit."""
+    now = datetime.now()
+    expired = [
+        sid for sid, data in analysis_sessions.items()
+        if now - data.get("created_at", now) > timedelta(minutes=SESSION_TTL_MINUTES)
+    ]
+    for sid in expired:
+        session_dir = UPLOAD_DIR / sid
+        if session_dir.exists():
+            shutil.rmtree(session_dir, ignore_errors=True)
+        del analysis_sessions[sid]
+
+    # Enforce max limit - remove oldest sessions
+    if len(analysis_sessions) > MAX_LEGACY_SESSIONS:
+        sorted_sessions = sorted(
+            analysis_sessions.items(),
+            key=lambda x: x[1].get("created_at", datetime.min)
+        )
+        for sid, _ in sorted_sessions[:len(analysis_sessions) - MAX_LEGACY_SESSIONS]:
+            session_dir = UPLOAD_DIR / sid
+            if session_dir.exists():
+                shutil.rmtree(session_dir, ignore_errors=True)
+            del analysis_sessions[sid]
+
+    if expired:
+        gc.collect()
+        logger.info(f"Cleaned up {len(expired)} expired legacy sessions")
 
 
 @app.post("/analyze/upload")
@@ -249,12 +285,16 @@ async def upload_card_images(
             with open(back_path, "wb") as f:
                 shutil.copyfileobj(back_image.file, f)
         
+        # Cleanup before adding new session
+        _cleanup_legacy_sessions()
+
         # Store session info
         analysis_sessions[session_id] = {
             "front_path": str(front_path),
             "back_path": str(back_path) if back_path else None,
             "status": "uploaded",
-            "results": None
+            "results": None,
+            "created_at": datetime.now()
         }
         
         logger.info(f"Upload successful - Session ID: {session_id}")
@@ -535,6 +575,7 @@ async def delete_session(session_id: str):
         shutil.rmtree(session_dir)
     
     del analysis_sessions[session_id]
+    gc.collect()  # Free numpy arrays from analysis results
     
     return {"status": "deleted", "session_id": session_id}
 
@@ -545,6 +586,14 @@ async def delete_session(session_id: str):
 
 from api.session_manager import get_session_manager
 from api.combined_grading import analyze_single_side, combine_front_back_analysis
+from api.hybrid_detect import detect_and_correct_card, get_detection_stats
+
+try:
+    from analysis.enhanced_corners import analyze_corners_enhanced
+    _enhanced_corners_available = True
+except ImportError:
+    _enhanced_corners_available = False
+    logger.warning("Enhanced corners not available, using basic corner analysis")
 
 # Initialize session manager
 session_manager = get_session_manager(UPLOAD_DIR)
@@ -579,31 +628,28 @@ async def upload_front_image(
     image: UploadFile = File(..., description="Front side of the Pokemon card")
 ):
     """
-    Upload and analyze the front image of a card.
-    
-    Args:
-        session_id: The session ID from start_grading_session
-        image: Front image file
-        
-    Returns:
-        Front analysis results and next step instructions
+    Upload, detect, and analyze the front image of a card.
+    Uses hybrid detection: multi-method OpenCV + Vision AI fallback.
     """
+    import time as _time
+    start_time = _time.time()
+    logger.info(f"[{session_id}] Starting front image upload and analysis")
+    
     session = session_manager.get_session(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found or expired")
     
     try:
-        # Save front image
+        # Save uploaded image
         session_dir = session_manager.get_session_dir(session_id)
         front_path = session_dir / f"front_{image.filename}"
-        
         with open(front_path, "wb") as f:
             shutil.copyfileobj(image.file, f)
+        logger.info(f"[{session_id}] Front image saved")
         
         # Quality check
         quality_result = check_image_quality(str(front_path))
         if not quality_result.get("can_analyze", False):
-            # Clean up bad image
             front_path.unlink(missing_ok=True)
             raise HTTPException(
                 status_code=400,
@@ -614,8 +660,43 @@ async def upload_front_image(
                 }
             )
         
-        # Run front analysis
-        front_analysis = analyze_single_side(str(front_path), "front")
+        # Hybrid card detection (4 OpenCV methods + AI fallback)
+        detection = await detect_and_correct_card(str(front_path), session_id=session_id)
+        detection_method = detection["method"]
+        detection_confidence = detection["confidence"]
+        
+        # Determine analysis path based on detection
+        if detection["success"] and detection["corrected_image"] is not None:
+            # Save corrected image and analyze it
+            corrected_path = session_dir / "front_corrected.jpg"
+            cv2.imwrite(str(corrected_path), detection["corrected_image"])
+            analysis_image_path = str(corrected_path)
+            logger.info(f"[{session_id}] Card detected via {detection_method} (confidence={detection_confidence:.2f})")
+        else:
+            # Detection failed — analyze raw image (pre-cropped photos)
+            analysis_image_path = str(front_path)
+            logger.info(f"[{session_id}] Detection failed, analyzing raw image")
+        
+        # Run analysis on the best available image
+        logger.info(f"[{session_id}] Starting front side analysis")
+        front_analysis = analyze_single_side(analysis_image_path, "front")
+        
+        # Use enhanced corners if available and we have a corrected image
+        if _enhanced_corners_available and detection["success"]:
+            try:
+                corrected_img = detection["corrected_image"]
+                enhanced = analyze_corners_enhanced(corrected_img, side="front")
+                front_analysis["corners"] = enhanced
+                logger.info(f"[{session_id}] Enhanced corners: {enhanced.get('overall_grade', 0):.1f}")
+            except Exception as e:
+                logger.warning(f"[{session_id}] Enhanced corners failed, keeping basic: {e}")
+        
+        # Add detection metadata to analysis
+        front_analysis["detection"] = {
+            "method": detection_method,
+            "confidence": detection_confidence,
+            "quality_assessment": detection.get("quality_assessment"),
+        }
         
         # Update session
         session_manager.update_session(
@@ -625,7 +706,8 @@ async def upload_front_image(
             status="front_uploaded"
         )
         
-        logger.info(f"Front image uploaded for session: {session_id}")
+        total_time = _time.time() - start_time
+        logger.info(f"[{session_id}] Front upload complete in {total_time:.2f}s")
         
         return {
             "session_id": session_id,
@@ -637,17 +719,23 @@ async def upload_front_image(
                 "edges": front_analysis.get("edges", {}).get("score"),
                 "detected_as": front_analysis.get("detected_as")
             },
+            "detection": {
+                "method": detection_method,
+                "confidence": detection_confidence,
+            },
             "image_quality": quality_result,
             "message": "Front image analyzed. Upload back image to complete grading.",
-            "next_step": f"/api/grading/{session_id}/upload-back"
+            "next_step": f"/api/grading/{session_id}/upload-back",
+            "processing_time": f"{total_time:.2f}s"
         }
         
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Front upload failed for session {session_id}: {str(e)}")
+        logger.error(f"[{session_id}] Front upload failed: {str(e)}")
         session_manager.update_session(session_id, status="error", error_message=str(e))
         raise HTTPException(status_code=500, detail=f"Front image analysis failed: {str(e)}")
+
 
 
 @app.post("/api/grading/{session_id}/upload-back")
@@ -656,15 +744,13 @@ async def upload_back_image(
     image: UploadFile = File(..., description="Back side of the Pokemon card")
 ):
     """
-    Upload and analyze the back image, then combine with front for final grade.
-    
-    Args:
-        session_id: The session ID
-        image: Back image file
-        
-    Returns:
-        Combined grading results
+    Upload, detect, and analyze the back image, then combine with front for final grade.
+    Uses hybrid detection: multi-method OpenCV + Vision AI fallback.
     """
+    import time as _time
+    start_time = _time.time()
+    logger.info(f"[{session_id}] Starting back image upload and analysis")
+    
     session = session_manager.get_session(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found or expired")
@@ -673,12 +759,12 @@ async def upload_back_image(
         raise HTTPException(status_code=400, detail="Front image not uploaded. Upload front first.")
     
     try:
-        # Save back image
+        # Save uploaded image
         session_dir = session_manager.get_session_dir(session_id)
         back_path = session_dir / f"back_{image.filename}"
-        
         with open(back_path, "wb") as f:
             shutil.copyfileobj(image.file, f)
+        logger.info(f"[{session_id}] Back image saved")
         
         # Quality check
         quality_result = check_image_quality(str(back_path))
@@ -693,10 +779,32 @@ async def upload_back_image(
                 }
             )
         
+        # Hybrid card detection
+        detection = await detect_and_correct_card(str(back_path), session_id=session_id)
+        
+        if detection["success"] and detection["corrected_image"] is not None:
+            corrected_path = session_dir / "back_corrected.jpg"
+            cv2.imwrite(str(corrected_path), detection["corrected_image"])
+            analysis_image_path = str(corrected_path)
+            logger.info(f"[{session_id}] Back card detected via {detection['method']}")
+        else:
+            analysis_image_path = str(back_path)
+            logger.info(f"[{session_id}] Back detection failed, analyzing raw image")
+        
         # Run back analysis
-        back_analysis = analyze_single_side(str(back_path), "back")
+        logger.info(f"[{session_id}] Starting back side analysis")
+        back_analysis = analyze_single_side(analysis_image_path, "back")
+        
+        # Enhanced corners for back if available
+        if _enhanced_corners_available and detection["success"]:
+            try:
+                enhanced = analyze_corners_enhanced(detection["corrected_image"], side="back")
+                back_analysis["corners"] = enhanced
+            except Exception as e:
+                logger.warning(f"[{session_id}] Enhanced back corners failed: {e}")
         
         # Combine front + back
+        logger.info(f"[{session_id}] Combining front and back analysis")
         combined_grade = combine_front_back_analysis(
             session.front_analysis,
             back_analysis
@@ -711,7 +819,9 @@ async def upload_back_image(
             status="complete"
         )
         
-        logger.info(f"Grading complete for session: {session_id}, Grade: {combined_grade.get('grade', {}).get('psa_estimate', 'N/A')}")
+        total_time = _time.time() - start_time
+        grade_estimate = combined_grade.get('grade', {}).get('psa_estimate', 'N/A')
+        logger.info(f"[{session_id}] Grading complete in {total_time:.2f}s - Grade: {grade_estimate}")
         
         return {
             "session_id": session_id,
@@ -723,15 +833,17 @@ async def upload_back_image(
                 "edges": combined_grade.get("edges"),
                 "surface": combined_grade.get("surface")
             },
-            "warnings": combined_grade.get("warnings", [])
+            "warnings": combined_grade.get("warnings", []),
+            "processing_time": f"{total_time:.2f}s"
         }
         
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Back upload failed for session {session_id}: {str(e)}")
+        logger.error(f"[{session_id}] Back upload failed: {str(e)}")
         session_manager.update_session(session_id, status="error", error_message=str(e))
         raise HTTPException(status_code=500, detail=f"Back image analysis failed: {str(e)}")
+
 
 
 @app.get("/api/grading/{session_id}/result")
@@ -778,8 +890,29 @@ async def delete_grading_session(session_id: str):
     return {"status": "deleted", "session_id": session_id}
 
 
+@app.get("/api/admin/detection-stats")
+async def detection_stats():
+    """Get hybrid detection statistics."""
+    return get_detection_stats()
+
+
+@app.on_event("startup")
+async def start_session_cleanup():
+    """Periodic cleanup of expired sessions to prevent memory leaks."""
+    async def cleanup_loop():
+        while True:
+            try:
+                _cleanup_legacy_sessions()
+                cleaned = session_manager.cleanup_expired()
+                if cleaned > 0:
+                    gc.collect()
+                    logger.info(f"Periodic cleanup: removed {cleaned} expired managed sessions")
+            except Exception as e:
+                logger.error(f"Session cleanup error: {e}")
+            await asyncio.sleep(120)  # Run every 2 minutes
+    asyncio.create_task(cleanup_loop())
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
-
-

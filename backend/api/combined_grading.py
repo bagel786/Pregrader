@@ -21,6 +21,7 @@ def analyze_single_side(
 ) -> Dict:
     """
     Run full analysis on a single card side.
+    Sequential processing to minimize memory usage.
     
     Args:
         image_path: Path to card image
@@ -42,7 +43,7 @@ def analyze_single_side(
         "errors": []
     }
     
-    # Load image to detect actual side
+    # Load image once and reuse
     image = cv2.imread(image_path)
     if image is None:
         results["errors"].append("Failed to load image")
@@ -127,41 +128,63 @@ def combine_front_back_analysis(
         combined["centering"] = {"grade_estimate": 5.0, "error": "Could not analyze centering"}
         combined["warnings"].append("Centering could not be analyzed")
     
-    # 2. CORNERS - Average all 8 corners
+    # 2. CORNERS - Worst-case biased blend (70% worst side, 30% better side)
     front_corners = front_analysis.get("corners", {})
     back_corners = back_analysis.get("corners", {})
     
     all_corner_scores = []
     combined_corners = {"corners": {}}
+    front_corner_scores = []
+    back_corner_scores = []
     
-    for side_name, side_corners in [("front", front_corners), ("back", back_corners)]:
+    for side_name, side_corners, side_list in [
+        ("front", front_corners, front_corner_scores),
+        ("back", back_corners, back_corner_scores)
+    ]:
         if "corners" in side_corners:
             for corner_name, corner_data in side_corners["corners"].items():
                 key = f"{side_name}_{corner_name}"
                 combined_corners["corners"][key] = corner_data
-                all_corner_scores.append(corner_data.get("score", 5.0))
+                score = corner_data.get("score", 5.0)
+                all_corner_scores.append(score)
+                side_list.append(score)
     
-    if all_corner_scores:
-        combined_corners["overall_grade"] = sum(all_corner_scores) / len(all_corner_scores)
+    if front_corner_scores and back_corner_scores:
+        # 70% worst side / 30% better side
+        front_avg = sum(front_corner_scores) / len(front_corner_scores)
+        back_avg = sum(back_corner_scores) / len(back_corner_scores)
+        worse = min(front_avg, back_avg)
+        better = max(front_avg, back_avg)
+        combined_corners["overall_grade"] = round(worse * 0.7 + better * 0.3, 1)
+    elif all_corner_scores:
+        combined_corners["overall_grade"] = round(sum(all_corner_scores) / len(all_corner_scores), 1)
     else:
         combined_corners["overall_grade"] = 5.0
         combined["warnings"].append("Corner analysis incomplete")
     
     combined["corners"] = combined_corners
     
-    # 3. EDGES - Worst case
+    # 3. EDGES - Worst-case biased blend (70% worst side, 30% better side)
     front_edges = front_analysis.get("edges", {})
     back_edges = back_analysis.get("edges", {})
     
     front_edge_score = front_edges.get("score", front_edges.get("grade_estimate", 10.0))
     back_edge_score = back_edges.get("score", back_edges.get("grade_estimate", 10.0))
     
+    worse_edge = min(front_edge_score, back_edge_score)
+    better_edge = max(front_edge_score, back_edge_score)
+    blended_edge_score = round(worse_edge * 0.7 + better_edge * 0.3, 1)
+    
     if back_edge_score < front_edge_score:
-        combined["edges"] = back_edges
+        combined["edges"] = back_edges.copy()
         combined["edges"]["source"] = "back"
     else:
-        combined["edges"] = front_edges
+        combined["edges"] = front_edges.copy()
         combined["edges"]["source"] = "front"
+    
+    # Override the score with the blended value
+    combined["edges"]["score"] = blended_edge_score
+    combined["edges"]["overall_grade"] = blended_edge_score
     
     # 4. SURFACE - Worst case
     front_surface = front_analysis.get("surface", {}).get("surface", {})
