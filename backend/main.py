@@ -625,7 +625,7 @@ async def start_grading_session():
 @app.post("/api/grading/{session_id}/upload-front")
 async def upload_front_image(
     session_id: str,
-    image: UploadFile = File(..., description="Front side of the Pokemon card")
+    file: UploadFile = File(..., description="Front side of the Pokemon card")
 ):
     """
     Upload, detect, and analyze the front image of a card.
@@ -642,9 +642,9 @@ async def upload_front_image(
     try:
         # Save uploaded image
         session_dir = session_manager.get_session_dir(session_id)
-        front_path = session_dir / f"front_{image.filename}"
+        front_path = session_dir / f"front_{file.filename}"
         with open(front_path, "wb") as f:
-            shutil.copyfileobj(image.file, f)
+            shutil.copyfileobj(file.file, f)
         logger.info(f"[{session_id}] Front image saved")
         
         # Quality check
@@ -741,7 +741,7 @@ async def upload_front_image(
 @app.post("/api/grading/{session_id}/upload-back")
 async def upload_back_image(
     session_id: str,
-    image: UploadFile = File(..., description="Back side of the Pokemon card")
+    file: UploadFile = File(..., description="Back side of the Pokemon card")
 ):
     """
     Upload, detect, and analyze the back image, then combine with front for final grade.
@@ -761,9 +761,9 @@ async def upload_back_image(
     try:
         # Save uploaded image
         session_dir = session_manager.get_session_dir(session_id)
-        back_path = session_dir / f"back_{image.filename}"
+        back_path = session_dir / f"back_{file.filename}"
         with open(back_path, "wb") as f:
-            shutil.copyfileobj(image.file, f)
+            shutil.copyfileobj(file.file, f)
         logger.info(f"[{session_id}] Back image saved")
         
         # Quality check
