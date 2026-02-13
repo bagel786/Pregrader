@@ -647,14 +647,20 @@ async def upload_front_image(
             shutil.copyfileobj(file.file, f)
         logger.info(f"[{session_id}] Front image saved")
         
-        # Quality check
+        # Quality check (log metrics but only block truly unreadable images)
         quality_result = check_image_quality(str(front_path))
-        if not quality_result.get("can_analyze", False):
+        logger.info(f"[{session_id}] Quality check: {quality_result.get('quality', 'unknown')} - "
+                    f"metrics={quality_result.get('metrics', {})} "
+                    f"issues={quality_result.get('issues', [])} "
+                    f"warnings={quality_result.get('warnings', [])}")
+        
+        if not quality_result.get("valid", True):
+            # Only block if image couldn't even be loaded
             front_path.unlink(missing_ok=True)
             raise HTTPException(
                 status_code=400,
                 detail={
-                    "error": "Image quality too low",
+                    "error": "Image could not be loaded",
                     "issues": quality_result.get("issues", []),
                     "user_feedback": quality_result.get("user_feedback", ["Please retake the photo"])
                 }
@@ -766,14 +772,20 @@ async def upload_back_image(
             shutil.copyfileobj(file.file, f)
         logger.info(f"[{session_id}] Back image saved")
         
-        # Quality check
+        # Quality check (log metrics but only block truly unreadable images)
         quality_result = check_image_quality(str(back_path))
-        if not quality_result.get("can_analyze", False):
+        logger.info(f"[{session_id}] Back quality check: {quality_result.get('quality', 'unknown')} - "
+                    f"metrics={quality_result.get('metrics', {})} "
+                    f"issues={quality_result.get('issues', [])} "
+                    f"warnings={quality_result.get('warnings', [])}")
+        
+        if not quality_result.get("valid", True):
+            # Only block if image couldn't even be loaded
             back_path.unlink(missing_ok=True)
             raise HTTPException(
                 status_code=400,
                 detail={
-                    "error": "Back image quality too low",
+                    "error": "Back image could not be loaded",
                     "issues": quality_result.get("issues", []),
                     "user_feedback": quality_result.get("user_feedback", ["Please retake the photo"])
                 }
