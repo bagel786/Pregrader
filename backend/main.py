@@ -858,6 +858,9 @@ async def upload_back_image(
 
 
 
+
+from utils.serialization import convert_numpy_types
+
 @app.get("/api/grading/{session_id}/result")
 async def get_grading_result(session_id: str):
     """
@@ -882,7 +885,7 @@ async def get_grading_result(session_id: str):
             "has_back": session.back_image_path is not None
         }
     
-    return {
+    response_data = {
         "session_id": session_id,
         "status": "complete",
         "grade": session.combined_grade.get("grade") if session.combined_grade else None,
@@ -890,6 +893,9 @@ async def get_grading_result(session_id: str):
         "back_analysis": session.back_analysis,
         "combined_grade": session.combined_grade
     }
+    
+    # Ensure no numpy types leak into JSON response
+    return convert_numpy_types(response_data)
 
 
 @app.delete("/api/grading/{session_id}")
