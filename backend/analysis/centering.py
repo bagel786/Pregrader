@@ -1,14 +1,18 @@
 """
 Improved centering analysis with robust card detection.
+Uses gradient-based border detection for reliable measurements.
 """
 import cv2
 import numpy as np
+import logging
 from typing import Dict, Optional, Tuple
 from .vision.image_preprocessing import (
     find_card_contour,
     get_card_corners,
     perspective_correct_card
 )
+
+logger = logging.getLogger(__name__)
 
 
 def detect_inner_artwork_box(image: np.ndarray) -> Optional[np.ndarray]:
@@ -52,13 +56,15 @@ def detect_inner_artwork_box(image: np.ndarray) -> Optional[np.ndarray]:
         
         x, y, w, h = cv2.boundingRect(cnt)
         
-        # Should be in upper portion of card (not the bottom text box)
-        if y > img_height * 0.5:
-            continue
+        # Relaxed: artwork can be anywhere (modern cards have varied layouts)
+        # Just ensure it's not at the very edge
+        margin = 0.05
+        if x < img_width * margin and y < img_height * margin:
+            continue  # Too close to top-left corner — probably the card itself
         
-        # Should have reasonable aspect ratio
+        # Should have reasonable aspect ratio for a card element
         aspect = w / h
-        if aspect < 0.8 or aspect > 1.5:
+        if aspect < 0.5 or aspect > 2.0:
             continue
         
         valid_boxes.append((x, y, w, h))
@@ -68,6 +74,94 @@ def detect_inner_artwork_box(image: np.ndarray) -> Optional[np.ndarray]:
     
     # Return largest valid box (likely the artwork frame)
     return max(valid_boxes, key=lambda box: box[2] * box[3])
+
+
+def detect_border_widths_gradient(image: np.ndarray) -> Tuple[float, float, float, float]:
+    """
+    Gradient-based border detection.
+    
+    Uses Sobel edge detection to find strong horizontal/vertical transitions
+    near each edge of the card. The first significant gradient band from
+    each side marks the border→artwork transition.
+    
+    This is more reliable than saturation-based detection for colored borders.
+    
+    Args:
+        image: Perspective-corrected card image
+        
+    Returns:
+        Tuple of (left, right, top, bottom) border widths
+    """
+    h, w = image.shape[:2]
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    
+    # Apply slight blur to reduce noise
+    gray = cv2.GaussianBlur(gray, (3, 3), 0)
+    
+    # Compute gradients
+    # For left/right borders, we want strong vertical edges (gradient in X direction)
+    grad_x = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)
+    grad_x = np.abs(grad_x)
+    
+    # For top/bottom borders, we want strong horizontal edges (gradient in Y direction)
+    grad_y = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3)
+    grad_y = np.abs(grad_y)
+    
+    # Normalize to 0-255
+    grad_x = (grad_x / grad_x.max() * 255).astype(np.uint8) if grad_x.max() > 0 else grad_x.astype(np.uint8)
+    grad_y = (grad_y / grad_y.max() * 255).astype(np.uint8) if grad_y.max() > 0 else grad_y.astype(np.uint8)
+    
+    # Threshold to find strong edges
+    _, strong_x = cv2.threshold(grad_x, 40, 255, cv2.THRESH_BINARY)
+    _, strong_y = cv2.threshold(grad_y, 40, 255, cv2.THRESH_BINARY)
+    
+    scan_limit = min(w // 4, 150)  # Don't scan more than 25% of dimension
+    scan_limit_y = min(h // 4, 150)
+    
+    # Minimum border: at least 2% of dimension
+    min_border_w = max(1, int(w * 0.02))
+    min_border_h = max(1, int(h * 0.02))
+    
+    # For each edge, project the gradient onto that axis and find the first peak
+    # LEFT: scan columns from left, look for column with high gradient density
+    left_width = min_border_w
+    for x in range(min_border_w, scan_limit):
+        col_density = np.mean(strong_x[:, x])
+        if col_density > 30:  # At least ~12% of pixels in this column are strong edges
+            left_width = x
+            break
+    
+    # RIGHT: scan columns from right
+    right_width = min_border_w
+    for x in range(w - 1 - min_border_w, w - scan_limit, -1):
+        col_density = np.mean(strong_x[:, x])
+        if col_density > 30:
+            right_width = w - 1 - x
+            break
+    
+    # TOP: scan rows from top
+    top_width = min_border_h
+    for y in range(min_border_h, scan_limit_y):
+        row_density = np.mean(strong_y[y, :])
+        if row_density > 30:
+            top_width = y
+            break
+    
+    # BOTTOM: scan rows from bottom
+    bottom_width = min_border_h
+    for y in range(h - 1 - min_border_h, h - scan_limit_y, -1):
+        row_density = np.mean(strong_y[y, :])
+        if row_density > 30:
+            bottom_width = h - 1 - y
+            break
+    
+    # Ensure minimum border width (at least 2% of dimension)
+    left_width = max(left_width, w * 0.02)
+    right_width = max(right_width, w * 0.02)
+    top_width = max(top_width, h * 0.02)
+    bottom_width = max(bottom_width, h * 0.02)
+    
+    return left_width, right_width, top_width, bottom_width
 
 
 def detect_border_widths(image: np.ndarray) -> Tuple[float, float, float, float]:
@@ -201,6 +295,13 @@ def calculate_centering_ratios(
     """
     Analyze card centering and return detailed measurements.
     
+    Uses a multi-method approach:
+    1. Try artwork box detection (most precise)
+    2. Fall back to gradient-based border detection (most reliable)
+    3. Fall back to saturation-based border detection (legacy)
+    
+    Includes validation to detect and handle unreliable measurements.
+    
     Args:
         image_path: Path to card image
         debug_output_path: Optional path to save debug visualization
@@ -231,10 +332,10 @@ def calculate_centering_ratios(
     corners = get_card_corners(card_contour)
     corrected = perspective_correct_card(image, corners)
     
-    # Detect inner artwork box
-    artwork_box = detect_inner_artwork_box(corrected)
-    
     img_height, img_width = corrected.shape[:2]
+    
+    # Method 1: Detect inner artwork box
+    artwork_box = detect_inner_artwork_box(corrected)
     detection_method = "artwork_box"
     
     if artwork_box is not None:
@@ -244,13 +345,55 @@ def calculate_centering_ratios(
         right = img_width - (x + w)
         top = y
         bottom = img_height - (y + h)
-    else:
-        # Fallback: use border color detection (better for holo/full-art cards)
-        detection_method = "border_detection"
-        left, right, top, bottom = detect_border_widths(corrected)
+        
+        # Validate artwork box result
+        lr_ratio = min(left, right) / max(left, right) if max(left, right) > 0 else 1.0
+        tb_ratio = min(top, bottom) / max(top, bottom) if max(top, bottom) > 0 else 1.0
+        
+        if lr_ratio < 0.3 or tb_ratio < 0.3:
+            # Artwork box detection gave extreme results, likely wrong
+            logger.warning(f"Artwork box centering looks unreliable (lr={lr_ratio:.2f}, tb={tb_ratio:.2f}), trying gradient method")
+            artwork_box = None  # Fall through to gradient method
     
-    # Calculate score
-    score = calculate_centering_score(left, right, top, bottom)
+    if artwork_box is None:
+        # Method 2: gradient-based border detection (most reliable)
+        detection_method = "gradient_detection"
+        left, right, top, bottom = detect_border_widths_gradient(corrected)
+        
+        # Validate gradient result
+        lr_ratio = min(left, right) / max(left, right) if max(left, right) > 0 else 1.0
+        tb_ratio = min(top, bottom) / max(top, bottom) if max(top, bottom) > 0 else 1.0
+        
+        if lr_ratio < 0.3 or tb_ratio < 0.3:
+            # Still unreliable, try saturation fallback
+            logger.warning(f"Gradient centering looks unreliable (lr={lr_ratio:.2f}, tb={tb_ratio:.2f}), trying saturation method")
+            detection_method = "border_detection"
+            left, right, top, bottom = detect_border_widths(corrected)
+    
+    # Final validation: if ALL methods give extreme asymmetry, 
+    # it's likely a detection issue, not actual centering
+    lr_ratio = min(left, right) / max(left, right) if max(left, right) > 0 else 1.0
+    tb_ratio = min(top, bottom) / max(top, bottom) if max(top, bottom) > 0 else 1.0
+    
+    if lr_ratio < 0.3 or tb_ratio < 0.3:
+        logger.warning(
+            f"All centering methods gave extreme asymmetry "
+            f"(L={left:.0f}, R={right:.0f}, T={top:.0f}, B={bottom:.0f}). "
+            f"Likely a detection artifact. Using moderate default."
+        )
+        # Use a moderate default rather than a wildly wrong score
+        score = 7.0
+        detection_method = f"{detection_method}_fallback"
+    else:
+        # Calculate score normally
+        score = calculate_centering_score(left, right, top, bottom)
+    
+    logger.info(
+        f"Centering via {detection_method}: "
+        f"L={left:.0f} R={right:.0f} T={top:.0f} B={bottom:.0f} "
+        f"lr_ratio={lr_ratio:.3f} tb_ratio={tb_ratio:.3f} "
+        f"score={score:.1f}"
+    )
     
     # Calculate percentages for display
     total_lr = left + right
@@ -266,9 +409,10 @@ def calculate_centering_ratios(
         debug_img = corrected.copy()
         
         if artwork_box is not None:
+            x, y, w, h = artwork_box
             cv2.rectangle(debug_img, (x, y), (x + w, y + h), (0, 255, 0), 2)
         else:
-            # Draw border measurement lines for border_detection method
+            # Draw border measurement lines
             left_int, right_int = int(left), int(right)
             top_int, bottom_int = int(top), int(bottom)
             cv2.line(debug_img, (left_int, 0), (left_int, img_height), (0, 255, 0), 1)
@@ -290,6 +434,16 @@ def calculate_centering_ratios(
         
         cv2.imwrite(debug_output_path, debug_img)
     
+    # Determine confidence based on detection method
+    if detection_method == "artwork_box":
+        confidence = 0.9
+    elif detection_method == "gradient_detection":
+        confidence = 0.8
+    elif "fallback" in detection_method:
+        confidence = 0.5
+    else:
+        confidence = 0.7
+    
     return {
         "success": True,
         "score": round(score, 1),
@@ -303,6 +457,5 @@ def calculate_centering_ratios(
             "left_right_ratio": f"{left_pct:.1f}/{right_pct:.1f}",
             "top_bottom_ratio": f"{top_pct:.1f}/{bottom_pct:.1f}"
         },
-        "confidence": 0.9 if detection_method == "artwork_box" else 0.7
+        "confidence": confidence
     }
-
