@@ -838,7 +838,7 @@ async def upload_back_image(
         return {
             "session_id": session_id,
             "status": "complete",
-            "grade": combined_grade.get("grade"),
+            "grading": combined_grade.get("grade"),
             "details": {
                 "centering": combined_grade.get("centering"),
                 "corners": combined_grade.get("corners"),
@@ -888,7 +888,7 @@ async def get_grading_result(session_id: str):
     response_data = {
         "session_id": session_id,
         "status": "complete",
-        "grade": session.combined_grade.get("grade") if session.combined_grade else None,
+        "grading": session.combined_grade.get("grade") if session.combined_grade else None,
         "front_analysis": session.front_analysis,
         "back_analysis": session.back_analysis,
         "combined_grade": session.combined_grade
