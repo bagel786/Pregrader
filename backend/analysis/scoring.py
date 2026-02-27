@@ -129,7 +129,13 @@ class GradingEngine:
             result.corners_score = sum(corners_scores) / len(corners_scores) if corners_scores else 5.0
             result.corners_confidence = 0.8
         
-        min_corner = min([c["score"] for c in corners_data["corners"].values()]) if corners_data.get("corners") else result.corners_score
+        # Extract min corner score - handle both standard dict and enhanced list formats
+        if corners_data.get("corners"):
+            min_corner = min(c["score"] for c in corners_data["corners"].values())
+        elif corners_data.get("individual_scores"):
+            min_corner = min(corners_data["individual_scores"])
+        else:
+            min_corner = result.corners_score
         
         # Edges: Use overall_grade if available
         if "overall_grade" in edges_data:

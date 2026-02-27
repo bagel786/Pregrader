@@ -142,10 +142,20 @@ def combine_front_back_analysis(
         ("back", back_corners, back_corner_scores)
     ]:
         if "corners" in side_corners:
+            # Standard format: {corners: {corner_name: {score: X}}}
             for corner_name, corner_data in side_corners["corners"].items():
                 key = f"{side_name}_{corner_name}"
                 combined_corners["corners"][key] = corner_data
                 score = corner_data.get("score", 5.0)
+                all_corner_scores.append(score)
+                side_list.append(score)
+        elif "individual_scores" in side_corners:
+            # Enhanced corners format: {individual_scores: [s1, s2, s3, s4]}
+            corner_names = ["top_left", "top_right", "bottom_right", "bottom_left"]
+            for i, score in enumerate(side_corners["individual_scores"]):
+                name = corner_names[i] if i < len(corner_names) else f"corner_{i}"
+                key = f"{side_name}_{name}"
+                combined_corners["corners"][key] = {"score": score}
                 all_corner_scores.append(score)
                 side_list.append(score)
     

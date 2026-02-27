@@ -85,8 +85,17 @@ class EnhancedCornerDetector:
         worst_corner = np.argmin(corner_scores)
         confidence = self._calculate_confidence(corner_scores, false_positives)
         
+        # Build backward-compatible "corners" dict so combine_front_back_analysis
+        # and GradingEngine.calculate_grade can extract per-corner scores
+        corner_names = ["top_left", "top_right", "bottom_right", "bottom_left"]
+        corners_dict = {}
+        for i, name in enumerate(corner_names):
+            if i < len(corner_scores):
+                corners_dict[name] = {"score": corner_scores[i]}
+        
         result = {
             "individual_scores": corner_scores,
+            "corners": corners_dict,
             "overall_grade": overall,
             "worst_corner": worst_corner,
             "confidence": confidence,
@@ -400,7 +409,7 @@ class EnhancedCornerDetector:
             penalty = 0.0
         
         overall = avg_score - penalty
-        return max(5.0, overall)
+        return max(1.0, overall)
     
     def _calculate_confidence(self, corner_scores: List[float], false_positives: int) -> float:
         """Calculate confidence in the analysis"""
