@@ -37,19 +37,31 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen> {
   Future<void> _initializeCamera() async {
     try {
       await _cameraService.initialize();
-      if (mounted) {
-        setState(() {
-          _isInitialized = true;
-        });
-        // Start live guidance stream
-        _cameraService.controller!.startImageStream(_onCameraImage);
-      }
+      if (!mounted) return;
+      setState(() {
+        _isInitialized = true;
+      });
+      // Defer stream start to next frame so camera is fully settled
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _startImageStream();
+      });
     } catch (e) {
       if (mounted) {
         setState(() {
           _errorMessage = 'Failed to initialize camera: $e';
         });
       }
+    }
+  }
+
+  void _startImageStream() {
+    final ctrl = _cameraService.controller;
+    if (ctrl == null || !ctrl.value.isInitialized) return;
+    if (ctrl.value.isStreamingImages) return; // already streaming
+    try {
+      ctrl.startImageStream(_onCameraImage);
+    } catch (_) {
+      // Stream unavailable — live guidance disabled, app continues normally
     }
   }
 
@@ -148,7 +160,10 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen> {
 
     try {
       // Stop stream before capture to avoid conflict
-      await _cameraService.controller!.stopImageStream();
+      final ctrl = _cameraService.controller;
+      if (ctrl != null && ctrl.value.isStreamingImages) {
+        await ctrl.stopImageStream();
+      }
 
       final XFile image = await _cameraService.takePicture();
 
@@ -229,11 +244,7 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen> {
           _isCapturing = false;
         });
         // Restart stream for continued guidance
-        try {
-          _cameraService.controller?.startImageStream(_onCameraImage);
-        } catch (_) {
-          // Controller may have been disposed — ignore
-        }
+        _startImageStream();
       }
     }
   }
@@ -322,10 +333,7 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen> {
 
   @override
   void dispose() {
-    // Stop stream before controller disposal
-    try {
-      _cameraService.controller?.stopImageStream();
-    } catch (_) {}
+    // CameraService.dispose() handles stream stop + controller disposal safely
     _cameraService.dispose();
     super.dispose();
   }

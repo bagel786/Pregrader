@@ -15,9 +15,16 @@ class CameraService {
   CameraController? get controller => _controller;
 
   Future<void> initialize() async {
-    if (_controller != null) return;
+    // Return early only if the controller is both non-null AND properly initialized
+    if (_controller != null && _controller!.value.isInitialized) return;
 
-    _cameras = await availableCameras();
+    // Dispose any stale controller before creating a new one
+    if (_controller != null) {
+      await _safeDispose(_controller!);
+      _controller = null;
+    }
+
+    _cameras ??= await availableCameras();
     if (_cameras == null || _cameras!.isEmpty) {
       throw Exception('No cameras available');
     }
@@ -54,7 +61,21 @@ class CameraService {
   }
 
   Future<void> dispose() async {
-    await _controller?.dispose();
+    final ctrl = _controller;
     _controller = null;
+    if (ctrl != null) {
+      await _safeDispose(ctrl);
+    }
+  }
+
+  static Future<void> _safeDispose(CameraController ctrl) async {
+    try {
+      if (ctrl.value.isStreamingImages) {
+        await ctrl.stopImageStream();
+      }
+    } catch (_) {}
+    try {
+      await ctrl.dispose();
+    } catch (_) {}
   }
 }
