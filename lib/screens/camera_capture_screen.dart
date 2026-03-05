@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:math' as math;
 import 'dart:typed_data';
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
@@ -27,6 +28,12 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen> {
   CameraReadiness _readiness = CameraReadiness.notReady;
   String _hint = 'Align card within the frame';
   int _frameSkip = 0;
+
+  // Detected card rect (normalized 0–1), null = no detection
+  Rect? _detectedCard;
+  // Smoothing buffer for detected rects (last N frames)
+  final List<Rect> _rectHistory = [];
+  static const int _smoothingFrames = 3;
 
   @override
   void initState() {
@@ -57,7 +64,7 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen> {
   void _startImageStream() {
     final ctrl = _cameraService.controller;
     if (ctrl == null || !ctrl.value.isInitialized) return;
-    if (ctrl.value.isStreamingImages) return; // already streaming
+    if (ctrl.value.isStreamingImages) return;
     try {
       ctrl.startImageStream(_onCameraImage);
     } catch (_) {
@@ -69,86 +76,170 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen> {
     // Throttle to ~2fps
     if (_frameSkip++ % 15 != 0) return;
 
-    final samples = _sampleBrightness(image);
-    if (samples.isEmpty) return;
-
-    final double mean = samples.reduce((a, b) => a + b) / samples.length;
-    final double variance = samples
-            .map((s) => (s - mean) * (s - mean))
-            .reduce((a, b) => a + b) /
-        samples.length;
+    final detected = _detectCardEdges(image);
 
     CameraReadiness newReadiness;
     String newHint;
+    Rect? newDetected;
 
-    if (variance > 800) {
-      newReadiness = CameraReadiness.ready;
-      newHint = 'Card detected — tap to capture';
-    } else if (variance > 300) {
-      newReadiness = CameraReadiness.nearReady;
-      newHint = 'Move closer to the card';
+    if (detected != null) {
+      // Smooth over last N frames
+      _rectHistory.add(detected);
+      if (_rectHistory.length > _smoothingFrames) {
+        _rectHistory.removeAt(0);
+      }
+      newDetected = _averageRects(_rectHistory);
+
+      // Check if card fills a reasonable portion of the frame
+      final area = newDetected.width * newDetected.height;
+      if (area > 0.15) {
+        newReadiness = CameraReadiness.ready;
+        newHint = 'Card detected — tap to capture';
+      } else {
+        newReadiness = CameraReadiness.nearReady;
+        newHint = 'Move closer to the card';
+      }
     } else {
+      _rectHistory.clear();
+      newDetected = null;
       newReadiness = CameraReadiness.notReady;
       newHint = 'Align card within the frame';
     }
 
-    if (mounted && (newReadiness != _readiness || newHint != _hint)) {
+    if (mounted &&
+        (newReadiness != _readiness ||
+            newHint != _hint ||
+            newDetected != _detectedCard)) {
       setState(() {
         _readiness = newReadiness;
         _hint = newHint;
+        _detectedCard = newDetected;
       });
     }
   }
 
-  /// Sample brightness values from a 4×4 grid in the center 40% of the frame.
-  /// Handles both yuv420 (Android) and bgra8888 (iOS) formats.
-  List<int> _sampleBrightness(CameraImage image) {
+  /// Detect card edges by scanning brightness boundaries.
+  /// Returns normalized rect (0–1) or null if no card found.
+  Rect? _detectCardEdges(CameraImage image) {
     try {
       final int w = image.width;
       final int h = image.height;
+      if (w == 0 || h == 0) return null;
 
-      final int startX = (w * 0.30).round();
-      final int endX = (w * 0.70).round();
-      final int startY = (h * 0.30).round();
-      final int endY = (h * 0.70).round();
-
-      final int stepX = ((endX - startX) / 3).round().clamp(1, w);
-      final int stepY = ((endY - startY) / 3).round().clamp(1, h);
-
-      final List<int> values = [];
       final ImageFormatGroup format = image.format.group;
+
+      // Sample on a 30x40 grid across the full frame
+      const int gridCols = 30;
+      const int gridRows = 40;
+      final int stepX = (w / gridCols).round().clamp(1, w);
+      final int stepY = (h / gridRows).round().clamp(1, h);
+
+      // Build brightness grid
+      final grid = List.generate(
+        gridRows,
+        (_) => List.filled(gridCols, 0),
+      );
 
       if (format == ImageFormatGroup.yuv420) {
         final Uint8List yPlane = image.planes[0].bytes;
         final int rowStride = image.planes[0].bytesPerRow;
-        for (int y = startY; y <= endY; y += stepY) {
-          for (int x = startX; x <= endX; x += stepX) {
-            final int idx = y * rowStride + x;
+        for (int row = 0; row < gridRows; row++) {
+          for (int col = 0; col < gridCols; col++) {
+            final int py = (row * stepY).clamp(0, h - 1);
+            final int px = (col * stepX).clamp(0, w - 1);
+            final int idx = py * rowStride + px;
             if (idx < yPlane.length) {
-              values.add(yPlane[idx]);
+              grid[row][col] = yPlane[idx];
             }
           }
         }
       } else if (format == ImageFormatGroup.bgra8888) {
         final Uint8List bytes = image.planes[0].bytes;
         final int rowStride = image.planes[0].bytesPerRow;
-        for (int y = startY; y <= endY; y += stepY) {
-          for (int x = startX; x <= endX; x += stepX) {
-            final int offset = y * rowStride + x * 4;
+        for (int row = 0; row < gridRows; row++) {
+          for (int col = 0; col < gridCols; col++) {
+            final int py = (row * stepY).clamp(0, h - 1);
+            final int px = (col * stepX).clamp(0, w - 1);
+            final int offset = py * rowStride + px * 4;
             if (offset + 2 < bytes.length) {
               final int b = bytes[offset];
               final int g = bytes[offset + 1];
               final int r = bytes[offset + 2];
-              values.add((0.299 * r + 0.587 * g + 0.114 * b).round());
+              grid[row][col] = (0.299 * r + 0.587 * g + 0.114 * b).round();
             }
+          }
+        }
+      } else {
+        return null;
+      }
+
+      // Compute mean brightness to set threshold
+      int sum = 0;
+      int count = 0;
+      for (int row = 0; row < gridRows; row++) {
+        for (int col = 0; col < gridCols; col++) {
+          sum += grid[row][col];
+          count++;
+        }
+      }
+      if (count == 0) return null;
+      final double mean = sum / count;
+
+      // Threshold: card pixels are brighter than background
+      // Use a threshold between background (dark) and card (bright)
+      final int threshold = (mean * 0.8 + 40).round().clamp(60, 180);
+
+      // Scan rows to find top/bottom boundaries
+      int topRow = gridRows;
+      int bottomRow = 0;
+      int leftCol = gridCols;
+      int rightCol = 0;
+
+      for (int row = 0; row < gridRows; row++) {
+        for (int col = 0; col < gridCols; col++) {
+          if (grid[row][col] >= threshold) {
+            if (row < topRow) topRow = row;
+            if (row > bottomRow) bottomRow = row;
+            if (col < leftCol) leftCol = col;
+            if (col > rightCol) rightCol = col;
           }
         }
       }
 
-      return values;
+      // Validate: card must occupy a reasonable region
+      final int rectW = rightCol - leftCol;
+      final int rectH = bottomRow - topRow;
+      if (rectW < 5 || rectH < 5) return null; // too small
+      if (rectW > gridCols * 0.95 && rectH > gridRows * 0.95) return null; // fills entire frame — likely no card boundary
+
+      // Convert to normalized coordinates
+      final double normLeft = leftCol / gridCols;
+      final double normTop = topRow / gridRows;
+      final double normRight = (rightCol + 1) / gridCols;
+      final double normBottom = (bottomRow + 1) / gridRows;
+
+      // Validate aspect ratio is roughly card-shaped (0.5–1.0 w/h ratio)
+      final double aspectRatio =
+          (normRight - normLeft) / (normBottom - normTop);
+      if (aspectRatio < 0.4 || aspectRatio > 1.2) return null;
+
+      return Rect.fromLTRB(normLeft, normTop, normRight, normBottom);
     } catch (_) {
-      return [];
+      return null;
     }
+  }
+
+  Rect _averageRects(List<Rect> rects) {
+    if (rects.length == 1) return rects.first;
+    double l = 0, t = 0, r = 0, b = 0;
+    for (final rect in rects) {
+      l += rect.left;
+      t += rect.top;
+      r += rect.right;
+      b += rect.bottom;
+    }
+    final n = rects.length;
+    return Rect.fromLTRB(l / n, t / n, r / n, b / n);
   }
 
   Future<void> _takePicture() async {
@@ -167,7 +258,7 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen> {
 
       final XFile image = await _cameraService.takePicture();
 
-      // Crop the image to the frame area
+      // Crop the image using content-based detection
       final XFile? croppedImage = await _cropImageToFrame(image);
 
       if (croppedImage == null) {
@@ -182,7 +273,6 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen> {
       if (!mounted) return;
 
       if (!isValid) {
-        // Hard failure — card not detected or resolution too low
         final issues = (validation['issues'] as List<dynamic>).join("\n");
         final shouldProceed = await showDialog<bool>(
           context: context,
@@ -211,7 +301,6 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen> {
         );
         if (shouldProceed != true) return;
       } else if (hasWarnings) {
-        // Soft warning — card detected but framing/resolution could be better
         final warnings = (validation['warnings'] as List<dynamic>).join(' ');
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -243,80 +332,98 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen> {
         setState(() {
           _isCapturing = false;
         });
-        // Restart stream for continued guidance
         _startImageStream();
       }
     }
   }
 
+  /// Detect card boundaries in a full-res image and crop to them.
+  /// Falls back to the last live-detected rect, then to the static guide.
   Future<XFile?> _cropImageToFrame(XFile imageFile) async {
+    // Capture screen size before async gap
+    final screenSize = MediaQuery.of(context).size;
+    final screenWidth = screenSize.width;
+    final screenHeight = screenSize.height;
+
     try {
       final bytes = await File(imageFile.path).readAsBytes();
       final image = img.decodeImage(bytes);
 
       if (image == null) return null;
 
-      // Get screen dimensions
-      final screenWidth = MediaQuery.of(context).size.width;
-      final screenHeight = MediaQuery.of(context).size.height;
+      final int imageWidth = image.width;
+      final int imageHeight = image.height;
 
-      // Calculate frame dimensions (same as overlay)
-      final frameWidthOnScreen = screenWidth * 0.85;
-      final frameHeightOnScreen = frameWidthOnScreen / 0.714;
+      // Try content-based detection on the full-res image
+      Rect? cardRect = _detectCardInFullRes(image);
 
-      // Get image dimensions
-      final imageWidth = image.width;
-      final imageHeight = image.height;
-
-      // Calculate scaling factors
-      // The camera preview is scaled to fit the screen while maintaining aspect ratio
-      final imageAspectRatio = imageWidth / imageHeight;
-      final screenAspectRatio = screenWidth / screenHeight;
-
-      double scaleX, scaleY;
-      double offsetX = 0, offsetY = 0;
-
-      if (imageAspectRatio > screenAspectRatio) {
-        // Image is wider - it's scaled to fit height, with horizontal letterboxing
-        scaleY = imageHeight / screenHeight;
-        scaleX = scaleY;
-
-        final scaledImageWidth = imageWidth / scaleX;
-        offsetX = (scaledImageWidth - screenWidth) / 2 * scaleX;
-      } else {
-        // Image is taller - it's scaled to fit width, with vertical letterboxing
-        scaleX = imageWidth / screenWidth;
-        scaleY = scaleX;
-
-        final scaledImageHeight = imageHeight / scaleY;
-        offsetY = (scaledImageHeight - screenHeight) / 2 * scaleY;
+      // Fallback: use the last live-stream detected rect
+      if (cardRect == null && _detectedCard != null) {
+        cardRect = _detectedCard;
       }
 
-      // Calculate frame position in image coordinates
-      final frameXOnScreen = (screenWidth - frameWidthOnScreen) / 2;
-      final frameYOnScreen = (screenHeight - frameHeightOnScreen) / 2;
+      // Fallback: use the static guide rect mapped to cover-mode coordinates
+      if (cardRect == null) {
+        final guideRect = staticGuideRect(Size(screenWidth, screenHeight));
+        cardRect = Rect.fromLTRB(
+          guideRect.left / screenWidth,
+          guideRect.top / screenHeight,
+          guideRect.right / screenWidth,
+          guideRect.bottom / screenHeight,
+        );
+      }
 
-      final frameXInImage = (frameXOnScreen * scaleX + offsetX).round();
-      final frameYInImage = (frameYOnScreen * scaleY + offsetY).round();
-      final frameWidthInImage = (frameWidthOnScreen * scaleX).round();
-      final frameHeightInImage = (frameHeightOnScreen * scaleY).round();
+      // Convert normalized rect to image pixel coordinates
+      // Account for cover-mode scaling: the preview covers the screen,
+      // so parts of the camera image may be clipped
+      final ctrl = _cameraService.controller;
+      double previewW = imageWidth.toDouble();
+      double previewH = imageHeight.toDouble();
+      if (ctrl != null && ctrl.value.isInitialized) {
+        previewW = ctrl.value.previewSize!.height; // swapped for portrait
+        previewH = ctrl.value.previewSize!.width;
+      }
 
-      // Ensure crop bounds are within image
-      final cropX = frameXInImage.clamp(0, imageWidth - 1);
-      final cropY = frameYInImage.clamp(0, imageHeight - 1);
-      final cropWidth = (frameWidthInImage).clamp(1, imageWidth - cropX);
-      final cropHeight = (frameHeightInImage).clamp(1, imageHeight - cropY);
+      final previewAspect = previewW / previewH;
+      final screenAspect = screenWidth / screenHeight;
 
-      // Crop the image
+      // Cover mode: scale so preview fills screen, then center-crop
+      double offsetX = 0, offsetY = 0;
+      if (previewAspect < screenAspect) {
+        // Preview is taller than screen — crop top/bottom
+        final visibleHeight = imageWidth / screenAspect;
+        offsetY = (imageHeight - visibleHeight) / 2;
+      } else {
+        // Preview is wider than screen — crop left/right
+        final visibleWidth = imageHeight * screenAspect;
+        offsetX = (imageWidth - visibleWidth) / 2;
+      }
+
+      final visibleW = imageWidth - 2 * offsetX;
+      final visibleH = imageHeight - 2 * offsetY;
+
+      final cropX = (offsetX + cardRect.left * visibleW).round();
+      final cropY = (offsetY + cardRect.top * visibleH).round();
+      final cropW = (cardRect.width * visibleW).round();
+      final cropH = (cardRect.height * visibleH).round();
+
+      // Add 2% padding
+      final padX = (cropW * 0.02).round();
+      final padY = (cropH * 0.02).round();
+
+      final finalX = (cropX - padX).clamp(0, imageWidth - 1);
+      final finalY = (cropY - padY).clamp(0, imageHeight - 1);
+      final finalW = (cropW + padX * 2).clamp(1, imageWidth - finalX);
+      final finalH = (cropH + padY * 2).clamp(1, imageHeight - finalY);
+
       final croppedImage = img.copyCrop(
         image,
-        x: cropX,
-        y: cropY,
-        width: cropWidth,
-        height: cropHeight,
+        x: finalX,
+        y: finalY,
+        width: finalW,
+        height: finalH,
       );
 
-      // Save the cropped image
       final croppedPath = imageFile.path.replaceAll('.jpg', '_cropped.jpg');
       final croppedFile = File(croppedPath);
       await croppedFile.writeAsBytes(img.encodeJpg(croppedImage, quality: 95));
@@ -327,14 +434,83 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Could not crop image, using original: $e')),
       );
-      return imageFile; // Return original if cropping fails
+      return imageFile;
+    }
+  }
+
+  /// Content-based card detection on a full-resolution image.
+  /// Returns normalized rect (0–1) or null.
+  Rect? _detectCardInFullRes(img.Image image) {
+    try {
+      final int w = image.width;
+      final int h = image.height;
+
+      // Sample on a coarser grid for performance (50x70)
+      const int gridCols = 50;
+      const int gridRows = 70;
+      final int stepX = (w / gridCols).round().clamp(1, w);
+      final int stepY = (h / gridRows).round().clamp(1, h);
+
+      // Build brightness grid
+      final grid = List.generate(
+        gridRows,
+        (_) => List.filled(gridCols, 0),
+      );
+
+      int sum = 0;
+      for (int row = 0; row < gridRows; row++) {
+        for (int col = 0; col < gridCols; col++) {
+          final int py = (row * stepY).clamp(0, h - 1);
+          final int px = (col * stepX).clamp(0, w - 1);
+          final pixel = image.getPixel(px, py);
+          final brightness =
+              (0.299 * pixel.r + 0.587 * pixel.g + 0.114 * pixel.b).round();
+          grid[row][col] = brightness;
+          sum += brightness;
+        }
+      }
+
+      final double mean = sum / (gridCols * gridRows);
+      final int threshold = (mean * 0.8 + 40).round().clamp(60, 180);
+
+      int topRow = gridRows;
+      int bottomRow = 0;
+      int leftCol = gridCols;
+      int rightCol = 0;
+
+      for (int row = 0; row < gridRows; row++) {
+        for (int col = 0; col < gridCols; col++) {
+          if (grid[row][col] >= threshold) {
+            if (row < topRow) topRow = row;
+            if (row > bottomRow) bottomRow = row;
+            if (col < leftCol) leftCol = col;
+            if (col > rightCol) rightCol = col;
+          }
+        }
+      }
+
+      final int rectW = rightCol - leftCol;
+      final int rectH = bottomRow - topRow;
+      if (rectW < 8 || rectH < 8) return null;
+      if (rectW > gridCols * 0.95 && rectH > gridRows * 0.95) return null;
+
+      final double normLeft = leftCol / gridCols;
+      final double normTop = topRow / gridRows;
+      final double normRight = (rightCol + 1) / gridCols;
+      final double normBottom = (bottomRow + 1) / gridRows;
+
+      final double aspectRatio =
+          (normRight - normLeft) / (normBottom - normTop);
+      if (aspectRatio < 0.4 || aspectRatio > 1.2) return null;
+
+      return Rect.fromLTRB(normLeft, normTop, normRight, normBottom);
+    } catch (_) {
+      return null;
     }
   }
 
   @override
   void dispose() {
-    // Defer disposal to next microtask so CameraPreview's ValueListenableBuilder
-    // can remove its listener before stopImageStream fires notifyListeners.
     final svc = _cameraService;
     Future.microtask(() => svc.dispose());
     super.dispose();
@@ -358,11 +534,43 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen> {
       body: Stack(
         fit: StackFit.expand,
         children: [
-          // Camera Preview - Centered
-          Center(child: CameraPreview(_cameraService.controller!)),
+          // Camera Preview — cover mode (fills entire screen, no black bars)
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final ctrl = _cameraService.controller!;
+              final previewSize = ctrl.value.previewSize!;
+              // previewSize is landscape (w > h), but we display in portrait
+              final previewW = previewSize.height;
+              final previewH = previewSize.width;
+              final screenW = constraints.maxWidth;
+              final screenH = constraints.maxHeight;
 
-          // Overlay with live readiness colour and hint
-          CameraOverlay(readiness: _readiness, hint: _hint),
+              // Scale to cover: use the larger scale factor
+              final scale = math.max(
+                screenW / previewW,
+                screenH / previewH,
+              );
+
+              return ClipRect(
+                child: OverflowBox(
+                  maxWidth: double.infinity,
+                  maxHeight: double.infinity,
+                  child: SizedBox(
+                    width: previewW * scale,
+                    height: previewH * scale,
+                    child: CameraPreview(ctrl),
+                  ),
+                ),
+              );
+            },
+          ),
+
+          // Overlay with live readiness colour, hint, and detected card
+          CameraOverlay(
+            readiness: _readiness,
+            hint: _hint,
+            detectedCard: _detectedCard,
+          ),
 
           // Controls
           Positioned(

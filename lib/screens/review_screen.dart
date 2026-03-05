@@ -353,7 +353,7 @@ class _ReviewScreenState extends State<ReviewScreen> {
         GestureDetector(
           onTap: onAdd,
           child: Container(
-            height: 250,
+            height: 350,
             width: double.infinity,
             decoration: BoxDecoration(
               color: Colors.grey[900],
