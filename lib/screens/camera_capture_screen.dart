@@ -333,8 +333,10 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen> {
 
   @override
   void dispose() {
-    // CameraService.dispose() handles stream stop + controller disposal safely
-    _cameraService.dispose();
+    // Defer disposal to next microtask so CameraPreview's ValueListenableBuilder
+    // can remove its listener before stopImageStream fires notifyListeners.
+    final svc = _cameraService;
+    Future.microtask(() => svc.dispose());
     super.dispose();
   }
 
