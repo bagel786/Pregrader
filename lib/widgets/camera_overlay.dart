@@ -1,7 +1,27 @@
 import 'package:flutter/material.dart';
 
+enum CameraReadiness { notReady, nearReady, ready }
+
 class CameraOverlay extends StatelessWidget {
-  const CameraOverlay({super.key});
+  final CameraReadiness readiness;
+  final String hint;
+
+  const CameraOverlay({
+    super.key,
+    this.readiness = CameraReadiness.notReady,
+    this.hint = 'Align card within the frame',
+  });
+
+  Color get _borderColor {
+    switch (readiness) {
+      case CameraReadiness.ready:
+        return Colors.green;
+      case CameraReadiness.nearReady:
+        return Colors.orange;
+      case CameraReadiness.notReady:
+        return Colors.red;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -11,9 +31,9 @@ class CameraOverlay extends StatelessWidget {
           children: [
             CustomPaint(
               size: Size(constraints.maxWidth, constraints.maxHeight),
-              painter: OverlayPainter(),
+              painter: OverlayPainter(borderColor: _borderColor),
             ),
-            // Instruction text
+            // Dynamic hint text
             Positioned(
               bottom: 120,
               left: 0,
@@ -28,11 +48,12 @@ class CameraOverlay extends StatelessWidget {
                     color: Colors.black54,
                     borderRadius: BorderRadius.circular(8),
                   ),
-                  child: const Text(
-                    'Align card within the frame',
+                  child: Text(
+                    hint,
                     style: TextStyle(
-                      color: Colors.white,
+                      color: _borderColor,
                       fontSize: 14,
+                      fontWeight: FontWeight.w500,
                     ),
                   ),
                 ),
@@ -46,6 +67,10 @@ class CameraOverlay extends StatelessWidget {
 }
 
 class OverlayPainter extends CustomPainter {
+  final Color borderColor;
+
+  const OverlayPainter({required this.borderColor});
+
   @override
   void paint(Canvas canvas, Size size) {
     final paint = Paint()..color = Colors.black54;
@@ -81,9 +106,9 @@ class OverlayPainter extends CustomPainter {
 
     canvas.drawPath(pathWithCutout, paint);
 
-    // Draw border around the cutout in purple
+    // Draw border around the cutout
     final borderPaint = Paint()
-      ..color = Colors.purple
+      ..color = borderColor
       ..style = PaintingStyle.stroke
       ..strokeWidth = 3;
 
@@ -93,12 +118,12 @@ class OverlayPainter extends CustomPainter {
     );
 
     // Draw corner indicators
-    _drawCornerIndicators(canvas, overlayRect);
+    _drawCornerIndicators(canvas, overlayRect, borderColor);
   }
 
-  void _drawCornerIndicators(Canvas canvas, Rect rect) {
+  void _drawCornerIndicators(Canvas canvas, Rect rect, Color color) {
     final paint = Paint()
-      ..color = Colors.purple
+      ..color = color
       ..style = PaintingStyle.stroke
       ..strokeWidth = 4
       ..strokeCap = StrokeCap.round;
@@ -155,7 +180,7 @@ class OverlayPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) {
-    return false;
+  bool shouldRepaint(covariant OverlayPainter oldDelegate) {
+    return oldDelegate.borderColor != borderColor;
   }
 }

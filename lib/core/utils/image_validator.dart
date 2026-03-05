@@ -3,8 +3,14 @@ import 'package:camera/camera.dart';
 import 'package:image/image.dart' as img;
 
 class ImageValidator {
-  /// Detects if a Pokemon card is likely present based on aspect ratio
-  /// Pokemon cards are approximately 6.3cm x 8.8cm => aspect ratio ~0.716
+  /// Validates that an image likely contains a Pokemon card.
+  ///
+  /// Returns a map with:
+  ///   - `cardDetected` (bool): whether the image shape matches a card
+  ///   - `isValid` (bool): true when cardDetected AND resolution is adequate (hard blocks)
+  ///   - `hasWarnings` (bool): true when cardDetected but framing could be improved (soft warnings)
+  ///   - `warnings` (`List<String>`): soft advisory messages
+  ///   - `issues` (`List<String>`): hard blocking issues
   static Future<Map<String, dynamic>> validateImage(XFile imageFile) async {
     try {
       final bytes = await File(imageFile.path).readAsBytes();
@@ -14,75 +20,78 @@ class ImageValidator {
         return {
           'isValid': false,
           'cardDetected': false,
+          'hasWarnings': false,
           'issues': ['Could not decode image'],
+          'warnings': <String>[],
         };
       }
 
-      // Calculate aspect ratio
+      // Calculate aspect ratio, normalized to portrait
       double aspectRatio = image.width / image.height;
-      
-      // Normalize to portrait orientation
-      if (aspectRatio > 1.0) {
-        aspectRatio = 1 / aspectRatio;
-      }
+      if (aspectRatio > 1.0) aspectRatio = 1 / aspectRatio;
 
-      // Pokemon card aspect ratio is ~0.716 (2.5" x 3.5")
-      // We allow a reasonable range: 0.60 to 0.80
-      // This is lenient enough to account for camera angles but strict enough
-      // to catch obvious non-card shapes
-      const double minAspectRatio = 0.60;
-      const double maxAspectRatio = 0.80;
+      // Pokemon card is exactly 0.716 (2.5" × 3.5").
+      // Tight range accounts for minor camera angle distortion.
+      const double minAspectRatio = 0.67;
+      const double maxAspectRatio = 0.76;
       const double idealAspectRatio = 0.716;
 
-      final bool cardDetected = aspectRatio >= minAspectRatio && 
-                                aspectRatio <= maxAspectRatio;
+      final bool cardDetected =
+          aspectRatio >= minAspectRatio && aspectRatio <= maxAspectRatio;
 
-      final List<String> issues = [];
+      final List<String> issues = [];    // blocking — card probably not present
+      final List<String> warnings = []; // advisory — card detected but could be better
 
       if (!cardDetected) {
         if (aspectRatio < minAspectRatio) {
-          issues.add('Image appears too narrow. Please ensure the card fills the frame.');
-        } else if (aspectRatio > maxAspectRatio) {
-          issues.add('Image appears too wide. Please ensure the card fills the frame.');
+          issues.add('No card detected — image appears too narrow. Ensure the card fills the frame.');
+        } else {
+          issues.add('No card detected — image appears too wide. Ensure the card fills the frame.');
         }
       } else {
-        // Card detected, but check if it's close to ideal
+        // Soft framing warning
         final double deviation = (aspectRatio - idealAspectRatio).abs();
-        if (deviation > 0.05) {
-          issues.add('Card detected, but framing could be improved for best results.');
+        if (deviation > 0.03) {
+          warnings.add('Framing could be improved — hold the camera directly above the card for best results.');
         }
       }
 
-      // Check image resolution
+      // Resolution check — hard block: too low for reliable damage detection
       final int minDimension = image.width < image.height ? image.width : image.height;
-      if (minDimension < 500) {
-        issues.add('Image resolution is low. Try moving closer to the card.');
+      if (minDimension < 600) {
+        issues.add('Image resolution is too low ($minDimension px). Move closer to the card.');
+      } else if (minDimension < 900) {
+        warnings.add('Higher resolution will improve grading accuracy — consider moving closer.');
       }
 
+      // isValid = no hard blocking issues detected
+      final bool isValid = cardDetected && issues.isEmpty;
+      final bool hasWarnings = warnings.isNotEmpty;
+
       return {
-        'isValid': cardDetected && issues.isEmpty,
+        'isValid': isValid,
         'cardDetected': cardDetected,
+        'hasWarnings': hasWarnings,
         'aspectRatio': aspectRatio,
+        'resolution': minDimension,
         'issues': issues,
+        'warnings': warnings,
       };
     } catch (e) {
       return {
         'isValid': false,
         'cardDetected': false,
+        'hasWarnings': false,
         'issues': ['Validation error: $e'],
+        'warnings': <String>[],
       };
     }
   }
 
-  /// Quick check for real-time feedback (less strict)
+  /// Quick check for real-time camera preview feedback (lenient).
   static bool quickCardCheck(int width, int height) {
     double aspectRatio = width / height;
-    
-    if (aspectRatio > 1.0) {
-      aspectRatio = 1 / aspectRatio;
-    }
-
-    // More lenient range for real-time feedback
-    return aspectRatio >= 0.55 && aspectRatio <= 0.85;
+    if (aspectRatio > 1.0) aspectRatio = 1 / aspectRatio;
+    return aspectRatio >= 0.62 && aspectRatio <= 0.80;
   }
 }

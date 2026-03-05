@@ -30,7 +30,7 @@ class CameraService {
 
     _controller = CameraController(
       rearCamera,
-      ResolutionPreset.high,
+      ResolutionPreset.veryHigh,
       enableAudio: false,
     );
 

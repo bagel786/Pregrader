@@ -24,7 +24,7 @@ class DetectionConfig:
     """Detection configuration from environment variables."""
     DEFAULT_METHOD = os.getenv("DEFAULT_DETECTION_METHOD", "hybrid")
     OPENCV_THRESHOLD = float(os.getenv("OPENCV_CONFIDENCE_THRESHOLD", "0.70"))
-    AI_TIMEOUT = int(os.getenv("AI_TIMEOUT_SECONDS", "30"))
+    AI_TIMEOUT = int(os.getenv("AI_TIMEOUT_SECONDS", "10"))
     VISION_AI_PROVIDER = os.getenv("VISION_AI_PROVIDER", "claude")
     MAX_CONCURRENT_AI = int(os.getenv("MAX_CONCURRENT_AI_REQUESTS", "5"))
     ENABLE_DEBUG = os.getenv("ENABLE_DEBUG_IMAGES", "true").lower() == "true"

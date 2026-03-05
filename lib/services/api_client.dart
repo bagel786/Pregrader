@@ -13,7 +13,7 @@ class ApiClient {
       "https://pregrader-production.up.railway.app";
 
   // Local development URLs
-  static const String _localIosUrl = "http://192.168.68.103:8000";
+  static const String _localIosUrl = "http://localhost:8000";
   static const String _androidEmulatorUrl = "http://10.0.2.2:8000";
 
   ApiClient._internal() {

@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:image/image.dart' as img;
@@ -22,6 +23,11 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen> {
   bool _isCapturing = false;
   String? _errorMessage;
 
+  // Live guidance state
+  CameraReadiness _readiness = CameraReadiness.notReady;
+  String _hint = 'Align card within the frame';
+  int _frameSkip = 0;
+
   @override
   void initState() {
     super.initState();
@@ -35,6 +41,8 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen> {
         setState(() {
           _isInitialized = true;
         });
+        // Start live guidance stream
+        _cameraService.controller!.startImageStream(_onCameraImage);
       }
     } catch (e) {
       if (mounted) {
@@ -42,6 +50,92 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen> {
           _errorMessage = 'Failed to initialize camera: $e';
         });
       }
+    }
+  }
+
+  void _onCameraImage(CameraImage image) {
+    // Throttle to ~2fps
+    if (_frameSkip++ % 15 != 0) return;
+
+    final samples = _sampleBrightness(image);
+    if (samples.isEmpty) return;
+
+    final double mean = samples.reduce((a, b) => a + b) / samples.length;
+    final double variance = samples
+            .map((s) => (s - mean) * (s - mean))
+            .reduce((a, b) => a + b) /
+        samples.length;
+
+    CameraReadiness newReadiness;
+    String newHint;
+
+    if (variance > 800) {
+      newReadiness = CameraReadiness.ready;
+      newHint = 'Card detected — tap to capture';
+    } else if (variance > 300) {
+      newReadiness = CameraReadiness.nearReady;
+      newHint = 'Move closer to the card';
+    } else {
+      newReadiness = CameraReadiness.notReady;
+      newHint = 'Align card within the frame';
+    }
+
+    if (mounted && (newReadiness != _readiness || newHint != _hint)) {
+      setState(() {
+        _readiness = newReadiness;
+        _hint = newHint;
+      });
+    }
+  }
+
+  /// Sample brightness values from a 4×4 grid in the center 40% of the frame.
+  /// Handles both yuv420 (Android) and bgra8888 (iOS) formats.
+  List<int> _sampleBrightness(CameraImage image) {
+    try {
+      final int w = image.width;
+      final int h = image.height;
+
+      final int startX = (w * 0.30).round();
+      final int endX = (w * 0.70).round();
+      final int startY = (h * 0.30).round();
+      final int endY = (h * 0.70).round();
+
+      final int stepX = ((endX - startX) / 3).round().clamp(1, w);
+      final int stepY = ((endY - startY) / 3).round().clamp(1, h);
+
+      final List<int> values = [];
+      final ImageFormatGroup format = image.format.group;
+
+      if (format == ImageFormatGroup.yuv420) {
+        final Uint8List yPlane = image.planes[0].bytes;
+        final int rowStride = image.planes[0].bytesPerRow;
+        for (int y = startY; y <= endY; y += stepY) {
+          for (int x = startX; x <= endX; x += stepX) {
+            final int idx = y * rowStride + x;
+            if (idx < yPlane.length) {
+              values.add(yPlane[idx]);
+            }
+          }
+        }
+      } else if (format == ImageFormatGroup.bgra8888) {
+        final Uint8List bytes = image.planes[0].bytes;
+        final int rowStride = image.planes[0].bytesPerRow;
+        for (int y = startY; y <= endY; y += stepY) {
+          for (int x = startX; x <= endX; x += stepX) {
+            final int offset = y * rowStride + x * 4;
+            if (offset + 2 < bytes.length) {
+              final int b = bytes[offset];
+              final int g = bytes[offset + 1];
+              final int r = bytes[offset + 2];
+              values.add((0.299 * r + 0.587 * g + 0.114 * b).round());
+            }
+          }
+        }
+      }
+
+      return values;
+    } catch (_) {
+      return [];
     }
   }
 
@@ -53,54 +147,40 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen> {
     });
 
     try {
+      // Stop stream before capture to avoid conflict
+      await _cameraService.controller!.stopImageStream();
+
       final XFile image = await _cameraService.takePicture();
 
       // Crop the image to the frame area
       final XFile? croppedImage = await _cropImageToFrame(image);
-      
+
       if (croppedImage == null) {
         throw Exception('Failed to crop image');
       }
 
       // Validate the captured image
       final validation = await ImageValidator.validateImage(croppedImage);
-      final bool cardDetected = validation['cardDetected'] ?? false;
+      final bool isValid = validation['isValid'] ?? false;
+      final bool hasWarnings = validation['hasWarnings'] ?? false;
 
       if (!mounted) return;
 
-      if (validation['isValid'] == true) {
-        // Image is valid, proceed
-        if (mounted) {
-          if (widget.isReturningResult) {
-            Navigator.of(context).pop(croppedImage);
-          } else {
-            Navigator.of(context).push(
-              MaterialPageRoute(
-                builder: (_) => ReviewScreen(frontImage: croppedImage),
-              ),
-            );
-          }
-        }
-      } else {
-        // Show issues to user
-        if (!mounted) return;
-        final issues = (validation['issues'] as List).join("\n");
-
+      if (!isValid) {
+        // Hard failure — card not detected or resolution too low
+        final issues = (validation['issues'] as List<dynamic>).join("\n");
         final shouldProceed = await showDialog<bool>(
           context: context,
           builder: (ctx) => AlertDialog(
-            title: Row(
+            title: const Row(
               children: [
-                Icon(
-                  cardDetected ? Icons.warning : Icons.error,
-                  color: cardDetected ? Colors.orange : Colors.red,
-                ),
-                const SizedBox(width: 8),
-                const Text("Image Quality Issue"),
+                Icon(Icons.error, color: Colors.red),
+                SizedBox(width: 8),
+                Text("Card Not Detected"),
               ],
             ),
             content: Text(
-              "$issues\n\nFor best results, we recommend retaking the photo. Would you like to proceed anyway?",
+              "$issues\n\nFor accurate grading the card must fill the frame clearly. Would you like to proceed anyway?",
             ),
             actions: [
               TextButton(
@@ -114,19 +194,28 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen> {
             ],
           ),
         );
+        if (shouldProceed != true) return;
+      } else if (hasWarnings) {
+        // Soft warning — card detected but framing/resolution could be better
+        final warnings = (validation['warnings'] as List<dynamic>).join(' ');
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Tip: $warnings'),
+            duration: const Duration(seconds: 4),
+            backgroundColor: Colors.orange[800],
+          ),
+        );
+      }
 
-        if (shouldProceed == true) {
-          if (!mounted) return;
-          if (widget.isReturningResult) {
-            Navigator.of(context).pop(croppedImage);
-          } else {
-            Navigator.of(context).push(
-              MaterialPageRoute(
-                builder: (_) => ReviewScreen(frontImage: croppedImage),
-              ),
-            );
-          }
-        }
+      if (!mounted) return;
+      if (widget.isReturningResult) {
+        Navigator.of(context).pop(croppedImage);
+      } else {
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => ReviewScreen(frontImage: croppedImage),
+          ),
+        );
       }
     } catch (e) {
       if (mounted) {
@@ -139,6 +228,12 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen> {
         setState(() {
           _isCapturing = false;
         });
+        // Restart stream for continued guidance
+        try {
+          _cameraService.controller?.startImageStream(_onCameraImage);
+        } catch (_) {
+          // Controller may have been disposed — ignore
+        }
       }
     }
   }
@@ -153,48 +248,48 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen> {
       // Get screen dimensions
       final screenWidth = MediaQuery.of(context).size.width;
       final screenHeight = MediaQuery.of(context).size.height;
-      
+
       // Calculate frame dimensions (same as overlay)
       final frameWidthOnScreen = screenWidth * 0.85;
       final frameHeightOnScreen = frameWidthOnScreen / 0.714;
-      
+
       // Get image dimensions
       final imageWidth = image.width;
       final imageHeight = image.height;
-      
+
       // Calculate scaling factors
       // The camera preview is scaled to fit the screen while maintaining aspect ratio
       final imageAspectRatio = imageWidth / imageHeight;
       final screenAspectRatio = screenWidth / screenHeight;
-      
+
       double scaleX, scaleY;
       double offsetX = 0, offsetY = 0;
-      
+
       if (imageAspectRatio > screenAspectRatio) {
         // Image is wider - it's scaled to fit height, with horizontal letterboxing
         scaleY = imageHeight / screenHeight;
         scaleX = scaleY;
-        
+
         final scaledImageWidth = imageWidth / scaleX;
         offsetX = (scaledImageWidth - screenWidth) / 2 * scaleX;
       } else {
-        // Image is taller - it's scaled to fit width, with vertical letterboxing  
+        // Image is taller - it's scaled to fit width, with vertical letterboxing
         scaleX = imageWidth / screenWidth;
         scaleY = scaleX;
-        
+
         final scaledImageHeight = imageHeight / scaleY;
         offsetY = (scaledImageHeight - screenHeight) / 2 * scaleY;
       }
-      
+
       // Calculate frame position in image coordinates
       final frameXOnScreen = (screenWidth - frameWidthOnScreen) / 2;
       final frameYOnScreen = (screenHeight - frameHeightOnScreen) / 2;
-      
+
       final frameXInImage = (frameXOnScreen * scaleX + offsetX).round();
       final frameYInImage = (frameYOnScreen * scaleY + offsetY).round();
       final frameWidthInImage = (frameWidthOnScreen * scaleX).round();
       final frameHeightInImage = (frameHeightOnScreen * scaleY).round();
-      
+
       // Ensure crop bounds are within image
       final cropX = frameXInImage.clamp(0, imageWidth - 1);
       final cropY = frameYInImage.clamp(0, imageHeight - 1);
@@ -217,13 +312,20 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen> {
 
       return XFile(croppedPath);
     } catch (e) {
-      print('Error cropping image: $e');
+      if (!mounted) return imageFile;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not crop image, using original: $e')),
+      );
       return imageFile; // Return original if cropping fails
     }
   }
 
   @override
   void dispose() {
+    // Stop stream before controller disposal
+    try {
+      _cameraService.controller?.stopImageStream();
+    } catch (_) {}
     _cameraService.dispose();
     super.dispose();
   }
@@ -249,8 +351,8 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen> {
           // Camera Preview - Centered
           Center(child: CameraPreview(_cameraService.controller!)),
 
-          // Overlay (no real-time detection, just visual guide)
-          const CameraOverlay(),
+          // Overlay with live readiness colour and hint
+          CameraOverlay(readiness: _readiness, hint: _hint),
 
           // Controls
           Positioned(

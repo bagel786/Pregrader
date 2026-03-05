@@ -15,7 +15,10 @@ import numpy as np
 from typing import Dict, List, Tuple, Optional
 from pathlib import Path
 import json
+import logging
 import asyncio
+
+_logger = logging.getLogger(__name__)
 
 
 class VisionAIDetector:
@@ -28,7 +31,7 @@ class VisionAIDetector:
         self,
         provider: str = "claude",
         api_key: Optional[str] = None,
-        timeout: int = 30
+        timeout: int = 10
     ):
         self.provider = provider
         self.api_key = api_key or os.getenv("ANTHROPIC_API_KEY")
@@ -144,17 +147,29 @@ Important:
                 # Extract text response
                 text_content = result["content"][0]["text"]
                 
-                # Parse JSON from response
-                # Claude might wrap it in markdown code blocks
+                # Parse JSON from response — Claude may wrap it in markdown blocks
+                # Try multiple extraction strategies before failing
+                json_str = None
                 if "```json" in text_content:
                     json_str = text_content.split("```json")[1].split("```")[0].strip()
                 elif "```" in text_content:
                     json_str = text_content.split("```")[1].split("```")[0].strip()
                 else:
-                    json_str = text_content.strip()
-                
-                llm_result = json.loads(json_str)
-                
+                    # Try to extract a JSON object directly from the text
+                    brace_start = text_content.find("{")
+                    brace_end = text_content.rfind("}")
+                    if brace_start != -1 and brace_end > brace_start:
+                        json_str = text_content[brace_start:brace_end + 1]
+                    else:
+                        json_str = text_content.strip()
+
+                try:
+                    llm_result = json.loads(json_str)
+                except json.JSONDecodeError:
+                    raise Exception(
+                        f"Claude returned a non-JSON response: {text_content[:200]}"
+                    )
+
                 return llm_result
                 
             except httpx.TimeoutException:
@@ -336,31 +351,27 @@ Important:
 async def test_detection(image_path: str):
     """Test the detector on an image"""
     detector = VisionAIDetector()
-    
-    print(f"Testing detection on: {image_path}")
-    print("Calling Claude Vision API...")
-    
+
+    _logger.info(f"Testing detection on: {image_path}")
+    _logger.info("Calling Claude Vision API...")
+
     result = await detector.hybrid_detection(image_path)
-    
-    print("\nResults:")
-    print(f"  Card detected: {result['llm_result'].get('card_detected')}")
-    print(f"  Confidence: {result['confidence']:.2%}")
-    print(f"  Method: {result['method']}")
-    
+
+    _logger.info(f"Card detected: {result['llm_result'].get('card_detected')}")
+    _logger.info(f"Confidence: {result['confidence']:.2%}")
+    _logger.info(f"Method: {result['method']}")
+
     if result['final_corners'] is not None:
-        print(f"  Corners: {result['final_corners'].tolist()}")
-        
-        # Apply correction
+        _logger.info(f"Corners: {result['final_corners'].tolist()}")
+
         corrected = detector.apply_perspective_correction(
             image_path,
             result['final_corners']
         )
-        
-        # Save result
         output_path = "test_corrected.jpg"
         cv2.imwrite(output_path, corrected)
-        print(f"\nCorrected image saved to: {output_path}")
-    
+        _logger.info(f"Corrected image saved to: {output_path}")
+
     return result
 
 

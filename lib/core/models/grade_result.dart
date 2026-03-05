@@ -7,14 +7,18 @@ class GradeResult {
 
   GradeResult({
     required this.centeringScore,
-    this.surfaceScore = 10.0, // Default for now
-    this.cornerScore = 10.0,
-    this.edgeScore = 10.0,
+    required this.surfaceScore,
+    required this.cornerScore,
+    required this.edgeScore,
   }) : finalGrade =
            (centeringScore + surfaceScore + cornerScore + edgeScore) / 4;
 
   @override
   String toString() {
-    return 'Grade: ${finalGrade.toStringAsFixed(1)} (Centering: ${centeringScore.toStringAsFixed(1)})';
+    return 'Grade: ${finalGrade.toStringAsFixed(1)} '
+        '(C:${centeringScore.toStringAsFixed(1)} '
+        'Cr:${cornerScore.toStringAsFixed(1)} '
+        'E:${edgeScore.toStringAsFixed(1)} '
+        'S:${surfaceScore.toStringAsFixed(1)})';
   }
 }

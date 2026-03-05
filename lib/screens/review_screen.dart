@@ -20,6 +20,30 @@ class _ReviewScreenState extends State<ReviewScreen> {
   bool _isGrading = false;
   String? _error;
 
+  // Progress tracking
+  int _gradingStep = 0;    // 0 = idle
+  String _stepLabel = '';
+  double _stepProgress = 0.0;
+
+  static const List<(String, double)> _steps = [
+    ('Starting session...', 0.10),
+    ('Uploading front image...', 0.35),
+    ('Uploading back image...', 0.60),
+    ('Analyzing card...', 0.85),
+    ('Finalizing grade...', 0.95),
+  ];
+
+  void _setStep(int step) {
+    if (!mounted) return;
+    setState(() {
+      _gradingStep = step;
+      if (step > 0 && step <= _steps.length) {
+        _stepLabel = _steps[step - 1].$1;
+        _stepProgress = _steps[step - 1].$2;
+      }
+    });
+  }
+
   @override
   void initState() {
     super.initState();
@@ -44,45 +68,41 @@ class _ReviewScreenState extends State<ReviewScreen> {
     setState(() {
       _isGrading = true;
       _error = null;
+      _gradingStep = 0;
     });
 
     try {
       final client = ApiClient();
 
-      // Show progress feedback
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Analyzing card... This should take 10-20 seconds.'),
-            duration: Duration(seconds: 3),
-            backgroundColor: Colors.blue,
-          ),
-        );
-      }
-
-      // 1. Start session
+      // Step 1: Start session
+      _setStep(1);
       final sessionId = await client.startGradingSession();
 
-      // 2. Upload front image
+      // Step 2: Upload front image
+      _setStep(2);
       await client.uploadFrontImage(
         sessionId: sessionId,
         frontImage: _frontFile,
       );
 
-      // 3. Upload back if provided
+      // Step 3: Upload back if provided (skip step if no back)
       if (_backFile != null) {
+        _setStep(3);
         await client.uploadBackImage(
           sessionId: sessionId,
           backImage: _backFile!,
         );
       }
 
-      // 4. Get grade
+      // Step 4: Analyze
+      _setStep(4);
       final result = await client.getGradingResult(sessionId);
+
+      // Step 5: Done
+      _setStep(5);
 
       if (!mounted) return;
 
-      // 3. Navigate to Results
       Navigator.of(context).pushReplacement(
         MaterialPageRoute(
           builder: (_) =>
@@ -91,49 +111,37 @@ class _ReviewScreenState extends State<ReviewScreen> {
       );
     } catch (e) {
       if (mounted) {
-        // Parse error message for better display
-        String errorMessage = e.toString();
-        String displayError = "Grading Failed";
+        final errorMessage = e.toString();
+        String displayError;
 
-        if (errorMessage.contains("500")) {
-          displayError =
-              "Server Error: The backend encountered an issue processing your card. Please try again.";
-        } else if (errorMessage.contains("404")) {
-          displayError = "Session not found. Please try uploading again.";
-        } else if (errorMessage.contains("timeout") ||
-            errorMessage.contains("timed out")) {
-          displayError =
-              "Request timed out. The analysis is taking longer than expected. Please try again with better lighting or a clearer photo.";
-        } else if (errorMessage.contains("SocketException") ||
-            errorMessage.contains("Connection")) {
+        if (errorMessage.contains("DioException") &&
+            errorMessage.contains("SocketException")) {
           displayError =
               "Cannot connect to server. Please check your internet connection.";
+        } else if (errorMessage.contains("timed out") ||
+            errorMessage.contains("timeout")) {
+          displayError =
+              "Analysis timed out. Try again with better lighting or a closer photo.";
+        } else if (errorMessage.contains("too large")) {
+          displayError = "Image file is too large. Please try a smaller photo.";
+        } else if (errorMessage.contains("404")) {
+          displayError = "Session expired. Please try again.";
+        } else if (errorMessage.contains("400")) {
+          displayError =
+              "Image quality issue detected. Retake with better lighting and ensure the card fills the frame.";
         } else {
-          displayError = "Error: $errorMessage";
+          displayError = "Grading failed. Please try again.";
         }
 
         setState(() {
           _error = displayError;
         });
-
-        // Show clearer error feedback
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(displayError),
-            backgroundColor: Colors.red,
-            duration: const Duration(seconds: 8),
-            action: SnackBarAction(
-              label: 'Retry',
-              textColor: Colors.white,
-              onPressed: _startGrading,
-            ),
-          ),
-        );
       }
     } finally {
       if (mounted) {
         setState(() {
           _isGrading = false;
+          _gradingStep = 0;
         });
       }
     }
@@ -159,15 +167,36 @@ class _ReviewScreenState extends State<ReviewScreen> {
                   _buildImageSection(
                     "Back (Optional)",
                     _backFile,
-                    _captureBack,
+                    _isGrading ? null : _captureBack,
                   ),
-                  if (_error != null)
+                  if (_isGrading) ...[
+                    const SizedBox(height: 24),
+                    _buildProgressPanel(),
+                  ],
+                  if (_error != null && !_isGrading)
                     Padding(
                       padding: const EdgeInsets.only(top: 20),
-                      child: Text(
-                        _error!,
-                        style: const TextStyle(color: Colors.red),
-                        textAlign: TextAlign.center,
+                      child: Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.red.withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(
+                              color: Colors.red.withValues(alpha: 0.4)),
+                        ),
+                        child: Row(
+                          children: [
+                            const Icon(Icons.error_outline,
+                                color: Colors.redAccent, size: 20),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                _error!,
+                                style: const TextStyle(color: Colors.white70),
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                 ],
@@ -186,12 +215,20 @@ class _ReviewScreenState extends State<ReviewScreen> {
                   style: ElevatedButton.styleFrom(
                     backgroundColor: Colors.deepPurple,
                     foregroundColor: Colors.white,
+                    disabledBackgroundColor: Colors.deepPurple.withValues(alpha: 0.4),
                   ),
                   child: _isGrading
-                      ? const CircularProgressIndicator(color: Colors.white)
-                      : const Text(
-                          "CONFIRM & GRADE",
+                      ? const Text(
+                          "Grading...",
                           style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white54,
+                          ),
+                        )
+                      : Text(
+                          _error != null ? "RETRY" : "CONFIRM & GRADE",
+                          style: const TextStyle(
                             fontSize: 16,
                             fontWeight: FontWeight.bold,
                           ),
@@ -202,6 +239,105 @@ class _ReviewScreenState extends State<ReviewScreen> {
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildProgressPanel() {
+    // Determine visible steps (skip step 3 if no back image)
+    final List<String> visibleSteps = [
+      'Create session',
+      'Upload front',
+      if (_backFile != null) 'Upload back',
+      'Analyze card',
+    ];
+    final int totalVisible = visibleSteps.length;
+
+    // Map _gradingStep (1-5) to visible step index
+    int currentVisible = _gradingStep;
+    if (_backFile == null && _gradingStep >= 3) {
+      // Collapsed: step 3 (back) becomes 3 (analyze), step 4 is still analyze
+      currentVisible = _gradingStep - 1;
+    }
+
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 300),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.deepPurple.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.deepPurple.withValues(alpha: 0.4)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: Colors.deepPurple,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Text(
+                _stepLabel,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: LinearProgressIndicator(
+              value: _stepProgress,
+              backgroundColor: Colors.white12,
+              valueColor:
+                  const AlwaysStoppedAnimation<Color>(Colors.deepPurple),
+              minHeight: 6,
+            ),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: List.generate(totalVisible, (i) {
+              final done = currentVisible > i + 1;
+              final active = currentVisible == i + 1;
+              return _buildStepDot(
+                  label: visibleSteps[i], done: done, active: active);
+            }),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStepDot(
+      {required String label, required bool done, required bool active}) {
+    final color = done
+        ? Colors.green
+        : active
+            ? Colors.deepPurple
+            : Colors.white24;
+    return Column(
+      children: [
+        Container(
+          width: 10,
+          height: 10,
+          decoration: BoxDecoration(shape: BoxShape.circle, color: color),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          label,
+          style: TextStyle(color: color, fontSize: 9),
+          textAlign: TextAlign.center,
+        ),
+      ],
     );
   }
 
@@ -228,14 +364,22 @@ class _ReviewScreenState extends State<ReviewScreen> {
                   : null,
             ),
             child: file == null
-                ? const Column(
+                ? Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Icon(Icons.add_a_photo, color: Colors.white54, size: 40),
-                      SizedBox(height: 8),
+                      Icon(
+                        Icons.add_a_photo,
+                        color: onAdd != null ? Colors.white54 : Colors.white24,
+                        size: 40,
+                      ),
+                      const SizedBox(height: 8),
                       Text(
-                        "Tap to add photo",
-                        style: TextStyle(color: Colors.white54),
+                        onAdd != null ? "Tap to add photo" : "No photo added",
+                        style: TextStyle(
+                          color: onAdd != null
+                              ? Colors.white54
+                              : Colors.white24,
+                        ),
                       ),
                     ],
                   )

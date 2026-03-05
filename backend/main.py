@@ -71,9 +71,14 @@ app = FastAPI(
 logger.info("FastAPI app initialized")
 
 # Configure CORS for Flutter app access
+_ALLOWED_ORIGINS = [
+    "https://pregrader-production.up.railway.app",
+    "http://localhost:8000",
+    "http://localhost:3000",
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, restrict to specific origins
+    allow_origins=_ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -213,6 +218,9 @@ async def get_sets():
 # Temp upload directory
 UPLOAD_DIR = Path(__file__).parent / "temp_uploads"
 UPLOAD_DIR.mkdir(exist_ok=True)
+
+# Maximum allowed upload size (15 MB)
+MAX_UPLOAD_BYTES = 15 * 1024 * 1024
 
 # In-memory storage for analysis sessions with TTL
 # Sessions expire after 15 minutes, max 20 sessions to cap memory
@@ -398,7 +406,7 @@ async def run_analysis(session_id: str):
                 }
             except Exception as e:
                 # Log but don't fail if back analysis fails
-                print(f"Warning: Back image analysis failed: {str(e)}")
+                logger.warning(f"Back image analysis failed: {str(e)}")
                 back_results = None
         
         # Check for errors in analysis FIRST before using the data
@@ -474,7 +482,8 @@ async def run_analysis(session_id: str):
                 centering_score=final_centering_score,
                 corners_data=final_corners_data,
                 edges_data=final_edges_data,
-                surface_data=final_surface_data
+                surface_data=final_surface_data,
+                centering_confidence=front_results["centering"].get("confidence", 0.8),
             )
         except Exception as e:
             raise HTTPException(
@@ -510,7 +519,6 @@ async def run_analysis(session_id: str):
         import traceback
         error_detail = f"Analysis failed: {str(e)}\n{traceback.format_exc()}"
         logger.error(f"Analysis error - Session ID: {session_id}\n{error_detail}")
-        print(error_detail)
         raise HTTPException(
             status_code=500, 
             detail=f"Analysis failed: {str(e)}"
@@ -640,11 +648,17 @@ async def upload_front_image(
         raise HTTPException(status_code=404, detail="Session not found or expired")
     
     try:
+        # Read file content and enforce size limit before saving
+        content = await file.read()
+        if len(content) > MAX_UPLOAD_BYTES:
+            raise HTTPException(status_code=400, detail="File too large. Maximum 15MB per image.")
+
         # Save uploaded image
         session_dir = session_manager.get_session_dir(session_id)
         front_path = session_dir / f"front_{file.filename}"
         with open(front_path, "wb") as f:
-            shutil.copyfileobj(file.file, f)
+            f.write(content)
+        del content  # Free memory immediately
         logger.info(f"[{session_id}] Front image saved")
         
         # Quality check (log metrics but only block truly unreadable images)
@@ -765,11 +779,17 @@ async def upload_back_image(
         raise HTTPException(status_code=400, detail="Front image not uploaded. Upload front first.")
     
     try:
+        # Read file content and enforce size limit before saving
+        content = await file.read()
+        if len(content) > MAX_UPLOAD_BYTES:
+            raise HTTPException(status_code=400, detail="File too large. Maximum 15MB per image.")
+
         # Save uploaded image
         session_dir = session_manager.get_session_dir(session_id)
         back_path = session_dir / f"back_{file.filename}"
         with open(back_path, "wb") as f:
-            shutil.copyfileobj(file.file, f)
+            f.write(content)
+        del content  # Free memory immediately
         logger.info(f"[{session_id}] Back image saved")
         
         # Quality check (log metrics but only block truly unreadable images)

@@ -13,11 +13,16 @@ class ResultScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final grading = gradingResult['grading'] ?? {};
-    final finalScore = grading['final_score'] ?? 0.0;
-    final psaEstimate = grading['psa_estimate'] ?? "?";
+    final grading = gradingResult['grading'] is Map
+        ? Map<String, dynamic>.from(gradingResult['grading'] as Map)
+        : <String, dynamic>{};
 
-    // Fix: Handle confidence as Map (new format) or String (legacy)
+    // Safe extraction — null means data is genuinely missing, not grade 0
+    final finalScore = (grading['final_score'] as num?)?.toDouble();
+    final psaEstimate = grading['psa_estimate']?.toString() ?? "?";
+    final gradeRange = grading['grade_range']?.toString();
+
+    // Handle confidence as Map (new format) or String (legacy)
     final confidenceData = grading['confidence'];
     String confidenceLevel = "Unknown";
     if (confidenceData is Map) {
@@ -26,11 +31,68 @@ class ResultScreen extends StatelessWidget {
       confidenceLevel = confidenceData;
     }
 
-    final subScores = grading['sub_scores'] as Map<String, dynamic>? ?? {};
-    final explanations = grading['explanations'] as List<dynamic>? ?? [];
+    // Safe type check — avoids runtime crash if API returns unexpected type
+    final subScores = grading['sub_scores'] is Map
+        ? Map<String, dynamic>.from(grading['sub_scores'] as Map)
+        : <String, dynamic>{};
+    final explanations = grading['explanations'] is List
+        ? grading['explanations'] as List<dynamic>
+        : <dynamic>[];
+
+    // If finalScore is null, the API returned invalid data — show error state
+    if (finalScore == null) {
+      return Scaffold(
+        backgroundColor: Colors.black,
+        appBar: AppBar(
+          title: const Text("Grading Result"),
+          backgroundColor: Colors.transparent,
+          automaticallyImplyLeading: false,
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.close),
+              onPressed: () =>
+                  Navigator.of(context).popUntil((route) => route.isFirst),
+            ),
+          ],
+        ),
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(32),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Icon(Icons.error_outline, color: Colors.redAccent, size: 64),
+                const SizedBox(height: 16),
+                const Text(
+                  "Could not read grading result",
+                  style: TextStyle(color: Colors.white, fontSize: 18),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  "The server returned an unexpected response. Please try again.",
+                  style: TextStyle(color: Colors.white54, fontSize: 14),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 32),
+                OutlinedButton(
+                  onPressed: () =>
+                      Navigator.of(context).popUntil((route) => route.isFirst),
+                  style: OutlinedButton.styleFrom(
+                    side: const BorderSide(color: Colors.white24),
+                    padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 32),
+                  ),
+                  child: const Text("Try Again", style: TextStyle(color: Colors.white)),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
 
     return Scaffold(
-      backgroundColor: Colors.black, // Premium Dark Mode
+      backgroundColor: Colors.black,
       appBar: AppBar(
         title: const Text("Grading Result"),
         backgroundColor: Colors.transparent,
@@ -52,9 +114,9 @@ class ResultScreen extends StatelessWidget {
               padding: const EdgeInsets.all(12),
               margin: const EdgeInsets.only(bottom: 20),
               decoration: BoxDecoration(
-                color: Colors.purple.withOpacity(0.15),
+                color: Colors.purple.withValues(alpha:0.15),
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.purple.withOpacity(0.4)),
+                border: Border.all(color: Colors.purple.withValues(alpha:0.4)),
               ),
               child: Column(
                 children: [
@@ -68,9 +130,9 @@ class ResultScreen extends StatelessWidget {
                       const SizedBox(width: 8),
                       Expanded(
                         child: Text(
-                          'This is an estimate only. Results may vary from professional grading.',
+                          'Conservative estimate — actual grade is often equal to or better than shown.',
                           style: TextStyle(
-                            color: Colors.white.withOpacity(0.9),
+                            color: Colors.white.withValues(alpha:0.9),
                             fontSize: 13,
                           ),
                         ),
@@ -112,7 +174,7 @@ class ResultScreen extends StatelessWidget {
                 border: Border.all(color: _getGradeColor(finalScore), width: 4),
                 boxShadow: [
                   BoxShadow(
-                    color: _getGradeColor(finalScore).withOpacity(0.5),
+                    color: _getGradeColor(finalScore).withValues(alpha:0.5),
                     blurRadius: 20,
                     spreadRadius: 5,
                   ),
@@ -138,9 +200,16 @@ class ResultScreen extends StatelessWidget {
             ),
             const SizedBox(height: 10),
             Text(
-              "Raw Score: $finalScore / 10",
+              "Raw Score: ${finalScore.toStringAsFixed(1)} / 10",
               style: const TextStyle(color: Colors.white54),
             ),
+            if (gradeRange != null) ...[
+              const SizedBox(height: 4),
+              Text(
+                "Expected PSA range: $gradeRange",
+                style: const TextStyle(color: Colors.white38, fontSize: 12),
+              ),
+            ],
             const SizedBox(height: 5),
             _buildConfidenceChip(confidenceLevel),
 
@@ -204,10 +273,9 @@ class ResultScreen extends StatelessWidget {
     );
   }
 
-  Color _getGradeColor(dynamic score) {
-    if (score is! num) return Colors.grey;
-    if (score >= 9) return Colors.amber; // Gold
-    if (score >= 8) return Colors.blue; // Silver/Blue
+  Color _getGradeColor(double score) {
+    if (score >= 9) return Colors.amber;
+    if (score >= 8) return Colors.blue;
     if (score >= 7) return Colors.green;
     return Colors.red;
   }
@@ -220,7 +288,7 @@ class ResultScreen extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.2),
+        color: color.withValues(alpha:0.2),
         borderRadius: BorderRadius.circular(20),
         border: Border.all(color: color),
       ),
@@ -256,22 +324,23 @@ class ResultScreen extends StatelessWidget {
   }
 
   Widget _buildExplanationCard(String text) {
+    // Positive lines (✓) get a green tint; warnings/failures get red
+    final bool isPositive = text.startsWith("✓");
+    final color = isPositive ? Colors.green : Colors.red;
+    final icon = isPositive ? Icons.check_circle_outline : Icons.warning_amber_rounded;
+
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Colors.red.withOpacity(0.1),
+        color: color.withValues(alpha: 0.08),
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.red.withOpacity(0.3)),
+        border: Border.all(color: color.withValues(alpha: 0.3)),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Icon(
-            Icons.warning_amber_rounded,
-            color: Colors.redAccent,
-            size: 20,
-          ),
+          Icon(icon, color: color, size: 20),
           const SizedBox(width: 10),
           Expanded(
             child: Text(text, style: const TextStyle(color: Colors.white70)),

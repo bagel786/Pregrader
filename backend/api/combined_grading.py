@@ -160,12 +160,12 @@ def combine_front_back_analysis(
                 side_list.append(score)
     
     if front_corner_scores and back_corner_scores:
-        # 70% worst side / 30% better side
+        # 55% worst side / 45% better side — conservative but not extreme
         front_avg = sum(front_corner_scores) / len(front_corner_scores)
         back_avg = sum(back_corner_scores) / len(back_corner_scores)
         worse = min(front_avg, back_avg)
         better = max(front_avg, back_avg)
-        combined_corners["overall_grade"] = round(worse * 0.7 + better * 0.3, 1)
+        combined_corners["overall_grade"] = round(worse * 0.55 + better * 0.45, 1)
     elif all_corner_scores:
         combined_corners["overall_grade"] = round(sum(all_corner_scores) / len(all_corner_scores), 1)
     else:
@@ -183,7 +183,7 @@ def combine_front_back_analysis(
     
     worse_edge = min(front_edge_score, back_edge_score)
     better_edge = max(front_edge_score, back_edge_score)
-    blended_edge_score = round(worse_edge * 0.7 + better_edge * 0.3, 1)
+    blended_edge_score = round(worse_edge * 0.60 + better_edge * 0.40, 1)
     
     if back_edge_score < front_edge_score:
         combined["edges"] = back_edges.copy()
@@ -216,7 +216,8 @@ def combine_front_back_analysis(
             centering_score=combined["centering"].get("grade_estimate", 5.0),
             corners_data=combined["corners"],
             edges_data=combined["edges"],
-            surface_data=combined["surface"].get("surface", {"score": 5.0})
+            surface_data=combined["surface"].get("surface", {"score": 5.0}),
+            centering_confidence=combined["centering"].get("confidence", 0.8),
         )
         combined["grade"] = grading_result
     except Exception as e:
@@ -263,12 +264,14 @@ def grade_card_session(
         }
         
         # Calculate grade
+        centering = combined["centering"]
         try:
             grading_result = GradingEngine.calculate_grade(
-                centering_score=combined["centering"].get("grade_estimate", 5.0) if combined["centering"] else 5.0,
+                centering_score=centering.get("grade_estimate", 5.0) if centering else 5.0,
                 corners_data=combined["corners"] if combined["corners"] else {"corners": {}, "overall_grade": 5.0},
                 edges_data=combined["edges"] if combined["edges"] else {"score": 5.0},
-                surface_data=combined["surface"].get("surface", {"score": 5.0}) if combined["surface"] else {"score": 5.0}
+                surface_data=combined["surface"].get("surface", {"score": 5.0}) if combined["surface"] else {"score": 5.0},
+                centering_confidence=centering.get("confidence", 0.8) if centering else 0.8,
             )
             combined["grade"] = grading_result
         except Exception as e:
