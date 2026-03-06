@@ -111,10 +111,11 @@ class CardDetectorChannel {
 
         let request = makeRectangleRequest(result: result)
 
-        // Camera frames are landscape (sensor orientation).
-        // .right tells Vision the image should be rotated 90° CW to portrait,
-        // so returned coords are in portrait space matching the screen.
-        let handler = VNImageRequestHandler(cvPixelBuffer: buffer, orientation: .right, options: [:])
+        // Auto-detect orientation from buffer dimensions:
+        // - Landscape buffer (width > height): use .right to rotate to portrait
+        // - Portrait buffer (width <= height): use .up (already correct)
+        let orientation: CGImagePropertyOrientation = width > height ? .right : .up
+        let handler = VNImageRequestHandler(cvPixelBuffer: buffer, orientation: orientation, options: [:])
         DispatchQueue.global(qos: .userInitiated).async {
             do {
                 try handler.perform([request])
@@ -161,8 +162,8 @@ class CardDetectorChannel {
 
         request.minimumAspectRatio = 0.55
         request.maximumAspectRatio = 0.85
-        request.minimumSize = 0.1
-        request.minimumConfidence = 0.3
+        request.minimumSize = 0.05
+        request.minimumConfidence = 0.2
         request.maximumObservations = 1
 
         return request

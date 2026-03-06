@@ -80,8 +80,8 @@ def analyze_whitening_for_front(
     avg_lightness = np.mean(border_pixels)
     
     # White pixels are significantly brighter than average
-    # Adaptive threshold: 40 points above the average or absolute 180
-    adaptive_threshold = min(avg_lightness + 40, 180)
+    # Adaptive threshold: 25 points above the average or absolute 175
+    adaptive_threshold = min(avg_lightness + 25, 175)
     
     whitened_pixels = np.sum(border_pixels > adaptive_threshold)
     total_pixels = len(border_pixels)
@@ -303,12 +303,34 @@ def analyze_edge_wear(
             "score": 5.0,
             "grade_estimate": 5.0
         }
-    
+
+    # Check if contour is suspiciously close to full image (full-frame fallback)
+    h, w = image.shape[:2]
+    contour_area = cv2.contourArea(card_contour)
+    image_area = h * w
+    full_frame_fallback = contour_area > (image_area * 0.95)
+
+    if full_frame_fallback:
+        # Contour covers >95% of the image — likely the full-frame fallback,
+        # not a real card boundary. Return moderate default with low confidence.
+        return {
+            "success": True,
+            "score": 7.0,
+            "overall_grade": 7.0,
+            "grade_estimate": 7.0,
+            "overall_whitening_pct": 0.0,
+            "condition": "Edge analysis inconclusive - card boundary not detected",
+            "worn_edges_list": [],
+            "worn_edge_count": 0,
+            "edges": {e: {"score": 7.0} for e in ['top', 'right', 'bottom', 'left']},
+            "detailed_edges": {},
+            "confidence": 0.3,
+        }
+
     # Detect if this is front or back of card
     card_side, side_confidence = detect_card_side(image)
     
     # Create border mask - resolution independent (3% of dimension)
-    h, w = image.shape[:2]
     border_px = max(15, int(min(h, w) * 0.03))
     
     border_mask = create_border_mask(image, card_contour, border_thickness=border_px)

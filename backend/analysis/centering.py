@@ -76,91 +76,104 @@ def detect_inner_artwork_box(image: np.ndarray) -> Optional[np.ndarray]:
     return max(valid_boxes, key=lambda box: box[2] * box[3])
 
 
+def _detect_border_widths_gradient_single(
+    gray: np.ndarray,
+    h: int,
+    w: int,
+    sobel_threshold: int = 40,
+) -> Tuple[float, float, float, float]:
+    """Single-pass gradient border detection with a given Sobel threshold."""
+    # Compute gradients
+    grad_x = np.abs(cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3))
+    grad_y = np.abs(cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3))
+
+    # Normalize to 0-255
+    grad_x = (grad_x / grad_x.max() * 255).astype(np.uint8) if grad_x.max() > 0 else grad_x.astype(np.uint8)
+    grad_y = (grad_y / grad_y.max() * 255).astype(np.uint8) if grad_y.max() > 0 else grad_y.astype(np.uint8)
+
+    # Threshold to find strong edges
+    _, strong_x = cv2.threshold(grad_x, sobel_threshold, 255, cv2.THRESH_BINARY)
+    _, strong_y = cv2.threshold(grad_y, sobel_threshold, 255, cv2.THRESH_BINARY)
+
+    scan_limit = min(w // 4, 150)
+    scan_limit_y = min(h // 4, 150)
+    min_border_w = max(1, int(w * 0.02))
+    min_border_h = max(1, int(h * 0.02))
+
+    left_width = min_border_w
+    for x in range(min_border_w, scan_limit):
+        if np.mean(strong_x[:, x]) > 30:
+            left_width = x
+            break
+
+    right_width = min_border_w
+    for x in range(w - 1 - min_border_w, w - scan_limit, -1):
+        if np.mean(strong_x[:, x]) > 30:
+            right_width = w - 1 - x
+            break
+
+    top_width = min_border_h
+    for y in range(min_border_h, scan_limit_y):
+        if np.mean(strong_y[y, :]) > 30:
+            top_width = y
+            break
+
+    bottom_width = min_border_h
+    for y in range(h - 1 - min_border_h, h - scan_limit_y, -1):
+        if np.mean(strong_y[y, :]) > 30:
+            bottom_width = h - 1 - y
+            break
+
+    left_width = max(left_width, w * 0.02)
+    right_width = max(right_width, w * 0.02)
+    top_width = max(top_width, h * 0.02)
+    bottom_width = max(bottom_width, h * 0.02)
+
+    return left_width, right_width, top_width, bottom_width
+
+
 def detect_border_widths_gradient(image: np.ndarray) -> Tuple[float, float, float, float]:
     """
-    Gradient-based border detection.
-    
-    Uses Sobel edge detection to find strong horizontal/vertical transitions
-    near each edge of the card. The first significant gradient band from
-    each side marks the border→artwork transition.
-    
-    This is more reliable than saturation-based detection for colored borders.
-    
+    Gradient-based border detection using median-of-3 for stability.
+
+    Runs Sobel edge detection at 3 slightly different thresholds (35, 40, 45)
+    and takes the median result, reducing sensitivity to threshold choice.
+
     Args:
         image: Perspective-corrected card image
-        
+
     Returns:
         Tuple of (left, right, top, bottom) border widths
     """
     h, w = image.shape[:2]
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    
-    # Apply slight blur to reduce noise
     gray = cv2.GaussianBlur(gray, (3, 3), 0)
-    
-    # Compute gradients
-    # For left/right borders, we want strong vertical edges (gradient in X direction)
-    grad_x = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)
-    grad_x = np.abs(grad_x)
-    
-    # For top/bottom borders, we want strong horizontal edges (gradient in Y direction)
-    grad_y = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3)
-    grad_y = np.abs(grad_y)
-    
-    # Normalize to 0-255
-    grad_x = (grad_x / grad_x.max() * 255).astype(np.uint8) if grad_x.max() > 0 else grad_x.astype(np.uint8)
-    grad_y = (grad_y / grad_y.max() * 255).astype(np.uint8) if grad_y.max() > 0 else grad_y.astype(np.uint8)
-    
-    # Threshold to find strong edges
-    _, strong_x = cv2.threshold(grad_x, 40, 255, cv2.THRESH_BINARY)
-    _, strong_y = cv2.threshold(grad_y, 40, 255, cv2.THRESH_BINARY)
-    
-    scan_limit = min(w // 4, 150)  # Don't scan more than 25% of dimension
-    scan_limit_y = min(h // 4, 150)
-    
-    # Minimum border: at least 2% of dimension
-    min_border_w = max(1, int(w * 0.02))
-    min_border_h = max(1, int(h * 0.02))
-    
-    # For each edge, project the gradient onto that axis and find the first peak
-    # LEFT: scan columns from left, look for column with high gradient density
-    left_width = min_border_w
-    for x in range(min_border_w, scan_limit):
-        col_density = np.mean(strong_x[:, x])
-        if col_density > 30:  # At least ~12% of pixels in this column are strong edges
-            left_width = x
-            break
-    
-    # RIGHT: scan columns from right
-    right_width = min_border_w
-    for x in range(w - 1 - min_border_w, w - scan_limit, -1):
-        col_density = np.mean(strong_x[:, x])
-        if col_density > 30:
-            right_width = w - 1 - x
-            break
-    
-    # TOP: scan rows from top
-    top_width = min_border_h
-    for y in range(min_border_h, scan_limit_y):
-        row_density = np.mean(strong_y[y, :])
-        if row_density > 30:
-            top_width = y
-            break
-    
-    # BOTTOM: scan rows from bottom
-    bottom_width = min_border_h
-    for y in range(h - 1 - min_border_h, h - scan_limit_y, -1):
-        row_density = np.mean(strong_y[y, :])
-        if row_density > 30:
-            bottom_width = h - 1 - y
-            break
-    
-    # Ensure minimum border width (at least 2% of dimension)
-    left_width = max(left_width, w * 0.02)
-    right_width = max(right_width, w * 0.02)
-    top_width = max(top_width, h * 0.02)
-    bottom_width = max(bottom_width, h * 0.02)
-    
+
+    # Run at 3 thresholds and take median for each border
+    results = []
+    for threshold in (35, 40, 45):
+        results.append(_detect_border_widths_gradient_single(gray, h, w, threshold))
+
+    # Median of each border measurement
+    left_width = sorted(r[0] for r in results)[1]
+    right_width = sorted(r[1] for r in results)[1]
+    top_width = sorted(r[2] for r in results)[1]
+    bottom_width = sorted(r[3] for r in results)[1]
+
+    # Symmetry validation: if one border is suspiciously small compared to its
+    # opposite and below 5% of the dimension, clamp to 10% of dimension.
+    # This prevents detection artifacts from producing extreme asymmetry.
+    min_w = w * 0.05
+    min_h = h * 0.05
+    if left_width < min_w and right_width > left_width * 3:
+        left_width = max(left_width, w * 0.10)
+    if right_width < min_w and left_width > right_width * 3:
+        right_width = max(right_width, w * 0.10)
+    if top_width < min_h and bottom_width > top_width * 3:
+        top_width = max(top_width, h * 0.10)
+    if bottom_width < min_h and top_width > bottom_width * 3:
+        bottom_width = max(bottom_width, h * 0.10)
+
     return left_width, right_width, top_width, bottom_width
 
 
@@ -263,29 +276,27 @@ def calculate_centering_score(
     # Average the two ratios
     avg_ratio = (lr_ratio + tb_ratio) / 2.0
     
-    # Smooth scoring using linear interpolation
-    # Perfect centering (1.00 ratio) = 10.0
-    # 0.95 ratio = 9.0
-    # 0.90 ratio = 8.0
-    # etc.
+    # Dampened scoring curve — wider brackets in the mid-range (0.5-0.8)
+    # to reduce sensitivity to measurement noise.
+    # Upper range (0.85+) keeps tight brackets since those measurements are reliable.
     if avg_ratio >= 0.975:
         return 10.0
     elif avg_ratio >= 0.95:
-        # Interpolate between 9.0 and 10.0
         return 9.0 + (avg_ratio - 0.95) / 0.025
     elif avg_ratio >= 0.90:
-        return 8.0 + (avg_ratio - 0.90) / 0.05 * 1.0
+        return 8.0 + (avg_ratio - 0.90) / 0.05
     elif avg_ratio >= 0.85:
-        return 7.0 + (avg_ratio - 0.85) / 0.05 * 1.0
-    elif avg_ratio >= 0.80:
-        return 6.0 + (avg_ratio - 0.80) / 0.05 * 1.0
+        return 7.0 + (avg_ratio - 0.85) / 0.05
     elif avg_ratio >= 0.75:
-        return 5.0 + (avg_ratio - 0.75) / 0.05 * 1.0
-    elif avg_ratio >= 0.70:
-        return 4.0 + (avg_ratio - 0.70) / 0.05 * 1.0
+        # Dampened: 0.10 ratio range → 1.0 grade (was 0.05 → 1.0)
+        return 6.0 + (avg_ratio - 0.75) / 0.10
+    elif avg_ratio >= 0.60:
+        # Dampened: 0.15 ratio range → 1.0 grade (was 0.10 → 2.0)
+        return 5.0 + (avg_ratio - 0.60) / 0.15
+    elif avg_ratio >= 0.45:
+        return 4.0 + (avg_ratio - 0.45) / 0.15
     else:
-        # Very poor centering
-        return max(1.0, avg_ratio * 5.0)
+        return max(2.0, 4.0 * avg_ratio / 0.45)
 
 
 def calculate_centering_ratios(

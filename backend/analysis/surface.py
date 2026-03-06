@@ -28,7 +28,8 @@ def detect_holographic_regions(image: np.ndarray) -> np.ndarray:
     variance_map = mean_sq - sq_mean
     
     # Threshold variance map - high variance indicates texture/holo
-    holo_mask = (variance_map > 200).astype(np.uint8) * 255
+    # Lowered from 200 to 120 to catch smooth golden/silver gradients
+    holo_mask = (variance_map > 120).astype(np.uint8) * 255
     
     # Clean up with morphological operations
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
@@ -66,7 +67,7 @@ def analyze_surface_damage(image_path: str) -> dict:
         
         # Calculate resolution-independent thresholds
         total_card_area = card_roi.shape[0] * card_roi.shape[1]
-        min_scratch_area = total_card_area * 0.0001  # 0.01% of card area
+        min_scratch_area = total_card_area * 0.0005  # 0.05% of card area
         major_damage_threshold = total_card_area * 0.0015  # 0.15% of card area
         
         # Glare Filtering
@@ -88,7 +89,7 @@ def analyze_surface_damage(image_path: str) -> dict:
         clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
         enhanced = clahe.apply(card_gray)
         
-        scratch_edges = cv2.Canny(enhanced, 100, 200)
+        scratch_edges = cv2.Canny(enhanced, 120, 200)
         # Exclude both glare AND holo regions from scratch detection
         scratch_edges = cv2.bitwise_and(scratch_edges, cv2.bitwise_not(exclusion_mask))
         
@@ -103,8 +104,13 @@ def analyze_surface_damage(image_path: str) -> dict:
         valid_scratches = []
         for cnt in scratch_contours:
             area = cv2.contourArea(cnt)
-            # Use resolution-independent threshold
             if area < min_scratch_area: continue
+            # Filter by aspect ratio: real scratches are elongated (>3:1)
+            _, (sw, sh) = cv2.minAreaRect(cnt)[:2]
+            if sw > 0 and sh > 0:
+                aspect = max(sw, sh) / min(sw, sh)
+                if aspect < 3.0:
+                    continue  # Compact shape — likely texture, not a scratch
             valid_scratches.append(area)
             
         scratch_count = len(valid_scratches)
