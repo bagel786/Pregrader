@@ -29,7 +29,44 @@ class CardDetectorService {
         bottomRight: Offset(map['bottomRightX']!, map['bottomRightY']!),
       );
     } on MissingPluginException {
-      // Not on iOS or channel not registered — return null
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Detect a card rectangle from raw BGRA pixel buffer (live camera frames).
+  /// The buffer is in landscape orientation; Vision rotates to portrait internally.
+  static Future<CardDetectionResult?> detectRectangleFromBuffer(
+    Uint8List bytes,
+    int width,
+    int height,
+    int bytesPerRow,
+  ) async {
+    try {
+      final result = await _channel.invokeMethod<Map>('detectRectangleFromBuffer', {
+        'bytes': bytes,
+        'width': width,
+        'height': height,
+        'bytesPerRow': bytesPerRow,
+      });
+      if (result == null) return null;
+
+      final map = Map<String, double>.from(result.cast<String, double>());
+      return CardDetectionResult(
+        boundingBox: Rect.fromLTRB(
+          map['left']!,
+          map['top']!,
+          map['right']!,
+          map['bottom']!,
+        ),
+        confidence: map['confidence']!,
+        topLeft: Offset(map['topLeftX']!, map['topLeftY']!),
+        topRight: Offset(map['topRightX']!, map['topRightY']!),
+        bottomLeft: Offset(map['bottomLeftX']!, map['bottomLeftY']!),
+        bottomRight: Offset(map['bottomRightX']!, map['bottomRightY']!),
+      );
+    } on MissingPluginException {
       return null;
     } catch (_) {
       return null;

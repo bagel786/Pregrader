@@ -14,9 +14,9 @@ class ImageValidator {
   static Future<Map<String, dynamic>> validateImage(XFile imageFile) async {
     try {
       final bytes = await File(imageFile.path).readAsBytes();
-      final image = img.decodeImage(bytes);
+      final decoded = img.decodeImage(bytes);
 
-      if (image == null) {
+      if (decoded == null) {
         return {
           'isValid': false,
           'cardDetected': false,
@@ -25,6 +25,9 @@ class ImageValidator {
           'warnings': <String>[],
         };
       }
+
+      // Apply EXIF rotation so width/height match portrait orientation
+      final image = img.bakeOrientation(decoded);
 
       // Calculate aspect ratio, normalized to portrait
       double aspectRatio = image.width / image.height;

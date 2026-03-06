@@ -1,6 +1,6 @@
 import 'dart:io';
 import 'dart:math' as math;
-import 'dart:typed_data';
+
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:image/image.dart' as img;
@@ -34,7 +34,12 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen> {
   Rect? _detectedCard;
   // Smoothing buffer for detected rects (last N frames)
   final List<Rect> _rectHistory = [];
-  static const int _smoothingFrames = 3;
+  static const int _smoothingFrames = 5;
+  // Track consecutive misses to avoid instant flicker
+  int _missCount = 0;
+  static const int _missThreshold = 3;
+
+  bool _isDetecting = false;
 
   @override
   void initState() {
@@ -70,172 +75,97 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen> {
     } catch (_) {}
   }
 
-  void _onCameraImage(CameraImage image) {
+  void _onCameraImage(CameraImage camImage) {
     // Throttle to ~2fps
     if (_frameSkip++ % 15 != 0) return;
+    if (_isDetecting) return;
+    _isDetecting = true;
 
-    final detected = _detectCardEdges(image);
+    _detectCardVision(camImage).then((detected) {
+      if (!mounted) return;
+      _isDetecting = false;
 
-    CameraReadiness newReadiness;
-    String newHint;
-    Rect? newDetected;
+      CameraReadiness newReadiness;
+      String newHint;
+      Rect? newDetected;
 
-    if (detected != null) {
-      _rectHistory.add(detected);
-      if (_rectHistory.length > _smoothingFrames) {
-        _rectHistory.removeAt(0);
-      }
-      newDetected = _averageRects(_rectHistory);
+      if (detected != null) {
+        _missCount = 0;
+        _rectHistory.add(detected);
+        if (_rectHistory.length > _smoothingFrames) {
+          _rectHistory.removeAt(0);
+        }
+        newDetected = _weightedAverageRects(_rectHistory);
 
-      final area = newDetected.width * newDetected.height;
-      if (area > 0.15) {
-        newReadiness = CameraReadiness.ready;
-        newHint = 'Card detected — tap to capture';
+        final area = newDetected.width * newDetected.height;
+        if (area > 0.15) {
+          newReadiness = CameraReadiness.ready;
+          newHint = 'Card detected — tap to capture';
+        } else {
+          newReadiness = CameraReadiness.nearReady;
+          newHint = 'Move closer to the card';
+        }
       } else {
-        newReadiness = CameraReadiness.nearReady;
-        newHint = 'Move closer to the card';
+        _missCount++;
+        if (_missCount >= _missThreshold) {
+          // Only clear after several consecutive misses to avoid flicker
+          _rectHistory.clear();
+          newDetected = null;
+          newReadiness = CameraReadiness.notReady;
+          newHint = 'Align card within the frame';
+        } else {
+          // Keep showing last known rect briefly
+          newDetected = _detectedCard;
+          newReadiness = _readiness;
+          newHint = _hint;
+        }
       }
-    } else {
-      _rectHistory.clear();
-      newDetected = null;
-      newReadiness = CameraReadiness.notReady;
-      newHint = 'Align card within the frame';
-    }
 
-    if (mounted &&
-        (newReadiness != _readiness ||
-            newHint != _hint ||
-            newDetected != _detectedCard)) {
-      setState(() {
-        _readiness = newReadiness;
-        _hint = newHint;
-        _detectedCard = newDetected;
-      });
-    }
+      if (newReadiness != _readiness ||
+          newHint != _hint ||
+          newDetected != _detectedCard) {
+        setState(() {
+          _readiness = newReadiness;
+          _hint = newHint;
+          _detectedCard = newDetected;
+        });
+      }
+    });
   }
 
-  /// Lightweight edge detection for live stream using gradient magnitude.
-  /// Returns normalized rect (0–1) or null if no card found.
-  Rect? _detectCardEdges(CameraImage image) {
+  /// Pass raw BGRA bytes directly to native Vision via MethodChannel.
+  /// No JPEG encoding, no file I/O, no pixel-by-pixel copy in Dart.
+  Future<Rect?> _detectCardVision(CameraImage camImage) async {
     try {
-      final int w = image.width;
-      final int h = image.height;
-      if (w == 0 || h == 0) return null;
+      if (camImage.planes.isEmpty) return null;
+      final plane = camImage.planes[0];
 
-      final ImageFormatGroup format = image.format.group;
-
-      const int gridCols = 30;
-      const int gridRows = 40;
-      final int stepX = (w / gridCols).round().clamp(1, w);
-      final int stepY = (h / gridRows).round().clamp(1, h);
-
-      // Build brightness grid
-      final grid = List.generate(gridRows, (_) => List.filled(gridCols, 0));
-
-      if (format == ImageFormatGroup.yuv420) {
-        final Uint8List yPlane = image.planes[0].bytes;
-        final int rowStride = image.planes[0].bytesPerRow;
-        for (int row = 0; row < gridRows; row++) {
-          for (int col = 0; col < gridCols; col++) {
-            final int py = (row * stepY).clamp(0, h - 1);
-            final int px = (col * stepX).clamp(0, w - 1);
-            final int idx = py * rowStride + px;
-            if (idx < yPlane.length) {
-              grid[row][col] = yPlane[idx];
-            }
-          }
-        }
-      } else if (format == ImageFormatGroup.bgra8888) {
-        final Uint8List bytes = image.planes[0].bytes;
-        final int rowStride = image.planes[0].bytesPerRow;
-        for (int row = 0; row < gridRows; row++) {
-          for (int col = 0; col < gridCols; col++) {
-            final int py = (row * stepY).clamp(0, h - 1);
-            final int px = (col * stepX).clamp(0, w - 1);
-            final int offset = py * rowStride + px * 4;
-            if (offset + 2 < bytes.length) {
-              final int b = bytes[offset];
-              final int g = bytes[offset + 1];
-              final int r = bytes[offset + 2];
-              grid[row][col] = (0.299 * r + 0.587 * g + 0.114 * b).round();
-            }
-          }
-        }
-      } else {
-        return null;
-      }
-
-      // Compute gradient magnitude to find edges (not just brightness)
-      final gradientGrid =
-          List.generate(gridRows, (_) => List.filled(gridCols, 0));
-      for (int row = 1; row < gridRows - 1; row++) {
-        for (int col = 1; col < gridCols - 1; col++) {
-          final gx = grid[row][col + 1] - grid[row][col - 1];
-          final gy = grid[row + 1][col] - grid[row - 1][col];
-          gradientGrid[row][col] = (gx * gx + gy * gy);
-        }
-      }
-
-      // Find gradient threshold (strong edges)
-      int maxGrad = 0;
-      for (int row = 1; row < gridRows - 1; row++) {
-        for (int col = 1; col < gridCols - 1; col++) {
-          if (gradientGrid[row][col] > maxGrad) {
-            maxGrad = gradientGrid[row][col];
-          }
-        }
-      }
-      if (maxGrad < 500) return null; // No significant edges
-
-      final int gradThreshold = (maxGrad * 0.15).round();
-
-      // Find bounding box of strong edge pixels
-      int topRow = gridRows, bottomRow = 0;
-      int leftCol = gridCols, rightCol = 0;
-
-      for (int row = 1; row < gridRows - 1; row++) {
-        for (int col = 1; col < gridCols - 1; col++) {
-          if (gradientGrid[row][col] >= gradThreshold) {
-            if (row < topRow) topRow = row;
-            if (row > bottomRow) bottomRow = row;
-            if (col < leftCol) leftCol = col;
-            if (col > rightCol) rightCol = col;
-          }
-        }
-      }
-
-      final int rectW = rightCol - leftCol;
-      final int rectH = bottomRow - topRow;
-      if (rectW < 5 || rectH < 5) return null;
-      if (rectW > gridCols * 0.95 && rectH > gridRows * 0.95) return null;
-
-      final double normLeft = leftCol / gridCols;
-      final double normTop = topRow / gridRows;
-      final double normRight = (rightCol + 1) / gridCols;
-      final double normBottom = (bottomRow + 1) / gridRows;
-
-      // Validate aspect ratio is roughly card-shaped
-      final double aspectRatio =
-          (normRight - normLeft) / (normBottom - normTop);
-      if (aspectRatio < 0.4 || aspectRatio > 1.2) return null;
-
-      return Rect.fromLTRB(normLeft, normTop, normRight, normBottom);
+      final result = await CardDetectorService.detectRectangleFromBuffer(
+        plane.bytes,
+        camImage.width,
+        camImage.height,
+        plane.bytesPerRow,
+      );
+      if (result == null) return null;
+      return result.boundingBox;
     } catch (_) {
       return null;
     }
   }
 
-  Rect _averageRects(List<Rect> rects) {
+  /// Weighted average: recent frames get more weight for responsiveness.
+  Rect _weightedAverageRects(List<Rect> rects) {
     if (rects.length == 1) return rects.first;
-    double l = 0, t = 0, r = 0, b = 0;
-    for (final rect in rects) {
-      l += rect.left;
-      t += rect.top;
-      r += rect.right;
-      b += rect.bottom;
+    double l = 0, t = 0, r = 0, b = 0, totalWeight = 0;
+    for (int i = 0; i < rects.length; i++) {
+      final weight = (i + 1).toDouble(); // newer frames get higher weight
+      l += rects[i].left * weight;
+      t += rects[i].top * weight;
+      r += rects[i].right * weight;
+      b += rects[i].bottom * weight;
+      totalWeight += weight;
     }
-    final n = rects.length;
-    return Rect.fromLTRB(l / n, t / n, r / n, b / n);
+    return Rect.fromLTRB(l / totalWeight, t / totalWeight, r / totalWeight, b / totalWeight);
   }
 
   Future<void> _takePicture() async {
@@ -331,8 +261,8 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen> {
   }
 
   /// Crop the captured image to the card region.
-  /// Uses iOS Vision framework (VNDetectRectanglesRequest) for precise detection,
-  /// falling back to the live-stream rect or static guide.
+  /// Saves the EXIF-baked image to a temp file, then runs Vision on that file
+  /// so both Dart and Vision operate on identical pixel data.
   Future<XFile?> _cropImageToFrame(XFile imageFile) async {
     final screenSize = MediaQuery.of(context).size;
     final screenWidth = screenSize.width;
@@ -340,29 +270,35 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen> {
 
     try {
       final bytes = await File(imageFile.path).readAsBytes();
-      final image = img.decodeImage(bytes);
-      if (image == null) return null;
+      var decoded = img.decodeImage(bytes);
+      if (decoded == null) return null;
+      // Apply EXIF rotation so width/height match portrait orientation
+      final image = img.bakeOrientation(decoded);
 
       final int imageWidth = image.width;
       final int imageHeight = image.height;
 
-      // Try native Vision rectangle detection (iOS only, returns null on Android)
+      // Save the baked (rotated) image to a temp file for Vision.
+      // This eliminates all EXIF ambiguity — Vision sees exactly what we see.
+      final bakedPath = imageFile.path.replaceAll('.jpg', '_baked.jpg');
+      await File(bakedPath).writeAsBytes(img.encodeJpg(image, quality: 95));
+
+      // Run Vision on the baked image
       Rect? cardRect;
-      final visionResult =
-          await CardDetectorService.detectRectangle(imageFile.path);
-      if (visionResult != null && visionResult.confidence > 0.5) {
-        // Vision returns coords relative to the full captured image — use directly
+      final visionResult = await CardDetectorService.detectRectangle(bakedPath);
+      if (visionResult != null && visionResult.confidence > 0.3) {
         cardRect = visionResult.boundingBox;
       }
 
-      // Fallback: use last live-stream detected rect
-      // Note: live rect is relative to the screen/preview, needs cover-mode mapping
+      // Fallback: use last live-stream detected rect (Vision coords in portrait space)
+      // These are relative to the camera frame, which has the same portrait orientation
+      // but may differ in field of view — still a reasonable approximation.
       final bool usesCoverMapping = cardRect == null;
       if (cardRect == null && _detectedCard != null) {
         cardRect = _detectedCard;
       }
 
-      // Fallback: static guide rect mapped to normalized screen coords
+      // Fallback: static guide rect
       if (cardRect == null) {
         final guideRect = staticGuideRect(Size(screenWidth, screenHeight));
         cardRect = Rect.fromLTRB(
@@ -376,7 +312,7 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen> {
       int cropX, cropY, cropW, cropH;
 
       if (!usesCoverMapping) {
-        // Vision rect is relative to the full image — map directly
+        // Vision rect is relative to the baked image — map directly
         cropX = (cardRect.left * imageWidth).round();
         cropY = (cardRect.top * imageHeight).round();
         cropW = (cardRect.width * imageWidth).round();
@@ -432,6 +368,9 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen> {
       final croppedPath = imageFile.path.replaceAll('.jpg', '_cropped.jpg');
       final croppedFile = File(croppedPath);
       await croppedFile.writeAsBytes(img.encodeJpg(croppedImage, quality: 95));
+
+      // Clean up temp baked file
+      try { await File(bakedPath).delete(); } catch (_) {}
 
       return XFile(croppedPath);
     } catch (e) {
