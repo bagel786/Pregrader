@@ -90,8 +90,11 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen> {
       Rect? newDetected;
 
       if (detected != null) {
+        // Convert from full-frame normalized coords to screen-normalized coords
+        // to account for cover-mode clipping
+        final screenRect = _frameToScreen(detected);
         _missCount = 0;
-        _rectHistory.add(detected);
+        _rectHistory.add(screenRect);
         if (_rectHistory.length > _smoothingFrames) {
           _rectHistory.removeAt(0);
         }
@@ -151,6 +154,39 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen> {
     } catch (_) {
       return null;
     }
+  }
+
+  /// Convert Vision frame-normalized rect (0–1 relative to full camera frame)
+  /// to screen-normalized rect (0–1 relative to the visible screen area).
+  /// Accounts for cover-mode clipping where the preview extends beyond screen edges.
+  Rect _frameToScreen(Rect frameRect) {
+    final ctrl = _cameraService.controller;
+    if (ctrl == null || !ctrl.value.isInitialized) return frameRect;
+
+    final previewSize = ctrl.value.previewSize!;
+    // previewSize is in landscape (width > height), swap for portrait
+    final double frameW = previewSize.height;
+    final double frameH = previewSize.width;
+
+    final screenSize = MediaQuery.of(context).size;
+    final double screenW = screenSize.width;
+    final double screenH = screenSize.height;
+
+    final double scale = math.max(screenW / frameW, screenH / frameH);
+    final double scaledW = frameW * scale;
+    final double scaledH = frameH * scale;
+
+    // How much of the scaled preview is clipped on each side
+    final double clipX = (scaledW - screenW) / 2;
+    final double clipY = (scaledH - screenH) / 2;
+
+    // Map from frame-normalized to screen pixels, then back to screen-normalized
+    return Rect.fromLTRB(
+      (frameRect.left * scaledW - clipX) / screenW,
+      (frameRect.top * scaledH - clipY) / screenH,
+      (frameRect.right * scaledW - clipX) / screenW,
+      (frameRect.bottom * scaledH - clipY) / screenH,
+    );
   }
 
   /// Weighted average: recent frames get more weight for responsiveness.
