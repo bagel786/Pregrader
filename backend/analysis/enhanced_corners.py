@@ -220,19 +220,21 @@ class EnhancedCornerDetector:
         # Apply card mask to only check valid regions
         white_mask = cv2.bitwise_and(white_mask, corner_mask)
         
-        # Count white pixels
+        # Count white pixels as percentage of valid (on-card) area
         white_pixels = np.sum(white_mask > 0)
-        
+        valid_area = max(1, np.sum(corner_mask > 0))
+        white_pct = (white_pixels / valid_area) * 100.0
+
         # Check for false positive patterns
         is_false_positive = self._is_false_positive(
-            corner_img, 
-            white_mask, 
+            corner_img,
+            white_mask,
             corner_mask,
             corner_index
         )
-        
-        # Score based on damage amount
-        score = self._calculate_corner_score(white_pixels)
+
+        # Score based on damage percentage (resolution-independent)
+        score = self._calculate_corner_score(white_pct)
         
         if self.debug:
             debug_img = corner_img.copy()
@@ -373,43 +375,31 @@ class EnhancedCornerDetector:
         # At least 60% should be in corner zone
         return (zone_white / total_white) > 0.6 if total_white > 0 else True
     
-    def _calculate_corner_score(self, white_pixels: int) -> float:
-        """Calculate score based on white pixel count (same as original but documented)"""
-        if white_pixels < 10:
-            return 10.0
-        elif white_pixels < 30:
-            # Linear interpolation: 10 pixels = 10.0, 30 pixels = 9.5
-            return 10.0 - (white_pixels - 10) * 0.025
-        elif white_pixels < 75:
-            # 30-75: 9.5 to 9.0
-            return 9.5 - (white_pixels - 30) * (0.5 / 45)
-        elif white_pixels < 150:
-            # 75-150: 9.0 to 8.5
-            return 9.0 - (white_pixels - 75) * (0.5 / 75)
-        elif white_pixels < 300:
-            # 150-300: 8.5 to 7.0
-            return 8.5 - (white_pixels - 150) * (1.5 / 150)
+    def _calculate_corner_score(self, white_pct: float) -> float:
+        """Calculate score based on white pixel percentage of corner ROI (resolution-independent)"""
+        if white_pct < 0.5:
+            return 10.0  # < 0.5% — pristine
+        elif white_pct < 1.5:
+            return 10.0 - (white_pct - 0.5) * 0.5  # 0.5-1.5% → 10.0-9.5
+        elif white_pct < 3.0:
+            return 9.5 - (white_pct - 1.5) * (0.5 / 1.5)  # 1.5-3% → 9.5-9.0
+        elif white_pct < 6.0:
+            return 9.0 - (white_pct - 3.0) * (1.0 / 3.0)  # 3-6% → 9.0-8.0
+        elif white_pct < 12.0:
+            return 8.0 - (white_pct - 6.0) * (1.0 / 6.0)  # 6-12% → 8.0-7.0
+        elif white_pct < 20.0:
+            return 7.0 - (white_pct - 12.0) * (1.0 / 8.0)  # 12-20% → 7.0-6.0
         else:
-            # Heavy damage
-            return max(5.0, 7.0 - (white_pixels - 300) * 0.01)
+            return max(4.0, 6.0 - (white_pct - 20.0) * 0.05)  # 20%+ heavy damage
     
     def _calculate_overall_grade(self, corner_scores: List[float]) -> float:
-        """Calculate overall grade with penalties for damaged corners"""
+        """Calculate overall grade — weighted blend of average and worst corner"""
         avg_score = np.mean(corner_scores)
         min_score = min(corner_scores)
-        
-        # Apply penalty based on worst corner
-        if min_score <= 5.0:
-            penalty = 2.0
-        elif min_score <= 6.5:
-            penalty = 1.0
-        elif min_score <= 7.5:
-            penalty = 0.5
-        else:
-            penalty = 0.0
-        
-        overall = avg_score - penalty
-        return max(1.0, overall)
+
+        # Blend average (70%) with worst corner (30%) — no extra penalty
+        overall = 0.7 * avg_score + 0.3 * min_score
+        return max(1.0, round(overall, 1))
     
     def _calculate_confidence(self, corner_scores: List[float], false_positives: int) -> float:
         """Calculate confidence in the analysis"""

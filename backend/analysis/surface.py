@@ -124,17 +124,17 @@ def analyze_surface_damage(image_path: str) -> dict:
         major_damage = [c for c in dark_contours if cv2.contourArea(c) > major_damage_threshold] 
         major_damage_detected = len(major_damage) > 0
         
-        # Smooth scoring with full range coverage
+        # Relaxed scratch scoring — artwork edges often produce false contours
         score = 10.0
         if scratch_count == 0: score = 10.0
-        elif scratch_count <= 2: score = 9.5
-        elif scratch_count <= 5: score = 9.0
-        elif scratch_count <= 10: score = 8.0
-        elif scratch_count <= 18: score = 7.0
-        elif scratch_count <= 28: score = 6.0
-        elif scratch_count <= 40: score = 5.0
-        elif scratch_count <= 60: score = 4.0
-        else: score = 3.0
+        elif scratch_count <= 3: score = 9.5
+        elif scratch_count <= 8: score = 9.0
+        elif scratch_count <= 15: score = 8.5
+        elif scratch_count <= 25: score = 8.0
+        elif scratch_count <= 40: score = 7.0
+        elif scratch_count <= 60: score = 6.0
+        elif scratch_count <= 80: score = 5.0
+        else: score = 4.0
         
         # Apply major damage penalty (creases, dents, stains)
         if major_damage_detected:

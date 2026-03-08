@@ -80,8 +80,9 @@ def analyze_whitening_for_front(
     avg_lightness = np.mean(border_pixels)
     
     # White pixels are significantly brighter than average
-    # Adaptive threshold: 25 points above the average or absolute 175
-    adaptive_threshold = min(avg_lightness + 25, 175)
+    # Purely relative threshold — no absolute cap, so light-colored borders
+    # (yellow, white) don't produce massive false positives
+    adaptive_threshold = avg_lightness + 35
     
     whitened_pixels = np.sum(border_pixels > adaptive_threshold)
     total_pixels = len(border_pixels)
@@ -381,8 +382,8 @@ def analyze_edge_wear(
     overall_whitening_score = score_whitening_percentage(whitening_pct)
 
     
-    # Weighted final: heavy weight on worst edge
-    final_score = min(overall_whitening_score, worst_edge_score)
+    # Blend overall and worst edge (instead of pure min which is too punishing)
+    final_score = 0.6 * overall_whitening_score + 0.4 * worst_edge_score
     
     # Determine condition description
     if final_score >= 9.5:

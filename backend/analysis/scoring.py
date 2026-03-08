@@ -162,36 +162,22 @@ class GradingEngine:
             result.surface_score * 0.20
         )
         
-        # 3. Apply Gradual Damage Penalties (not hard caps)
-        # Penalties are calibrated to match professional grader expectations.
-        # Each tier is ~25% less aggressive than earlier uncalibrated values.
+        # 3. Damage penalties — kept light since sub-scores already reflect damage.
+        # Only penalize for truly severe/concentrated damage patterns.
         damage_penalty = 0.0
 
-        # Corner damage penalty (gradual)
+        # Corner damage penalty — only for severe damage
         if min_corner <= 5.0:
-            damage_penalty += 1.5  # Severe corner damage
-        elif min_corner <= 6.5:
-            damage_penalty += 0.7  # Significant corner damage
-        elif min_corner <= 7.5:
-            damage_penalty += 0.3  # Moderate corner damage
+            damage_penalty += 0.5  # Severe corner damage
+        elif min_corner <= 6.0:
+            damage_penalty += 0.2  # Significant corner damage
 
-        # Edge wear penalty (gradual)
-        edges_with_significant_wear = len([s for s in edges_scores if s < 7.0])
-        if edges_with_significant_wear >= 4:
-            damage_penalty += 1.0  # All edges worn
-        elif edges_with_significant_wear >= 3:
-            damage_penalty += 0.7  # Most edges worn
-        elif edges_with_significant_wear >= 2:
-            damage_penalty += 0.3  # Multiple edges worn
-
-        # Surface damage penalty (gradual)
+        # Surface damage penalty — only for creases/dents
         if surface_data.get("major_damage_detected", False):
-            damage_penalty += 1.5  # Crease/dent detected
-        elif result.surface_score < 7.0:
-            damage_penalty += 0.3  # Multiple scratches
+            damage_penalty += 0.5  # Crease/dent detected
 
-        # Cap total penalty to prevent extreme stacking for borderline cards
-        damage_penalty = min(damage_penalty, 2.5)
+        # Cap total penalty
+        damage_penalty = min(damage_penalty, 1.0)
 
         # Apply penalty
         final_score = weighted_score - damage_penalty
