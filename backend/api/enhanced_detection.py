@@ -15,7 +15,6 @@ import numpy as np
 from pathlib import Path
 import asyncio
 import time
-import os
 import json
 import io
 import logging
@@ -34,6 +33,7 @@ from analysis.surface import analyze_surface_damage
 # New imports
 from analysis.enhanced_corners import analyze_corners_enhanced
 from services.ai.vision_detector import VisionAIDetector
+from api.hybrid_detect import DetectionConfig
 
 router = APIRouter()
 
@@ -41,27 +41,10 @@ router = APIRouter()
 session_manager = get_session_manager()
 
 logger.info("Enhanced detection module loaded")
-
-
-# ============================================================================
-# CONFIGURATION
-# ============================================================================
-
-class DetectionConfig:
-    """Centralized configuration"""
-    DEFAULT_METHOD = os.getenv('DEFAULT_DETECTION_METHOD', 'hybrid')
-    VISION_AI_PROVIDER = os.getenv('VISION_AI_PROVIDER', 'claude')
-    OPENCV_THRESHOLD = float(os.getenv('OPENCV_CONFIDENCE_THRESHOLD', '0.70'))
-    ENABLE_DEBUG = os.getenv('ENABLE_DEBUG_IMAGES', 'true').lower() == 'true'
-    DEBUG_RETENTION_HOURS = int(os.getenv('DEBUG_IMAGE_RETENTION_HOURS', '24'))
-    MAX_CONCURRENT_AI = int(os.getenv('MAX_CONCURRENT_AI_REQUESTS', '5'))
-    AI_TIMEOUT = int(os.getenv('AI_TIMEOUT_SECONDS', '30'))
-
 logger.info(f"Detection Config: method={DetectionConfig.DEFAULT_METHOD}, "
            f"threshold={DetectionConfig.OPENCV_THRESHOLD}, "
            f"debug={DetectionConfig.ENABLE_DEBUG}, "
            f"ai_timeout={DetectionConfig.AI_TIMEOUT}s")
-
 
 # Track concurrent AI requests
 _ai_semaphore = asyncio.Semaphore(DetectionConfig.MAX_CONCURRENT_AI)

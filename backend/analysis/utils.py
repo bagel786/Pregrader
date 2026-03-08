@@ -346,7 +346,7 @@ def correct_perspective(image, contour):
     # Get the 4 corners of the card
     rect = cv2.minAreaRect(contour)
     box = cv2.boxPoints(rect)
-    box = np.int0(box)
+    box = np.intp(box)
     
     # Order points: top-left, top-right, bottom-right, bottom-left
     pts = order_points(box.astype(np.float32))
@@ -414,7 +414,7 @@ def find_card_contour(image, min_area_threshold=2000):
     if len(approx) != 4:
         rect = cv2.minAreaRect(contour)
         box = cv2.boxPoints(rect)
-        approx = np.int0(box)
+        approx = np.intp(box)
     
     # Get bounding rect
     bounding_rect = cv2.boundingRect(approx)

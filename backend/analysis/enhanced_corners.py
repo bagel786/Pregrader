@@ -147,9 +147,9 @@ class EnhancedCornerDetector:
                 refined_mask = np.zeros((h, w), dtype=np.uint8)
                 cv2.drawContours(refined_mask, [largest], -1, 255, -1)
                 
-                # Erode slightly to avoid edge artifacts
-                kernel = np.ones((5, 5), np.uint8)
-                refined_mask = cv2.erode(refined_mask, kernel, iterations=2)
+                # Light erode to avoid edge artifacts — keep corners intact
+                kernel = np.ones((3, 3), np.uint8)
+                refined_mask = cv2.erode(refined_mask, kernel, iterations=1)
                 
                 return refined_mask
         
@@ -191,7 +191,7 @@ class EnhancedCornerDetector:
             total_pixels = corner_size * corner_size
             validity_ratio = valid_pixels / total_pixels
             
-            is_valid = validity_ratio > 0.7  # At least 70% of corner is on card
+            is_valid = validity_ratio > 0.4  # At least 40% of corner is on card
             
             corner_regions.append((corner_img, corner_mask, is_valid))
         

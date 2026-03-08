@@ -66,10 +66,16 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen> {
     }
   }
 
-  void _startImageStream() {
+  Future<void> _startImageStream() async {
     final ctrl = _cameraService.controller;
     if (ctrl == null || !ctrl.value.isInitialized) return;
-    if (ctrl.value.isStreamingImages) return;
+    // Stop any existing stream first so we register THIS screen's callback
+    // (the singleton CameraService may still have the previous screen's listener)
+    if (ctrl.value.isStreamingImages) {
+      try {
+        await ctrl.stopImageStream();
+      } catch (_) {}
+    }
     try {
       ctrl.startImageStream(_onCameraImage);
     } catch (_) {}

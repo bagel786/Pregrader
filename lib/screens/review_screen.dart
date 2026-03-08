@@ -85,14 +85,12 @@ class _ReviewScreenState extends State<ReviewScreen> {
         frontImage: _frontFile,
       );
 
-      // Step 3: Upload back if provided (skip step if no back)
-      if (_backFile != null) {
-        _setStep(3);
-        await client.uploadBackImage(
-          sessionId: sessionId,
-          backImage: _backFile!,
-        );
-      }
+      // Step 3: Upload back image
+      _setStep(3);
+      await client.uploadBackImage(
+        sessionId: sessionId,
+        backImage: _backFile!,
+      );
 
       // Step 4: Analyze
       _setStep(4);
@@ -165,7 +163,7 @@ class _ReviewScreenState extends State<ReviewScreen> {
                   _buildImageSection("Front", _frontFile, null),
                   const SizedBox(height: 20),
                   _buildImageSection(
-                    "Back (Optional)",
+                    "Back",
                     _backFile,
                     _isGrading ? null : _captureBack,
                   ),
@@ -211,7 +209,7 @@ class _ReviewScreenState extends State<ReviewScreen> {
                 width: double.infinity,
                 height: 50,
                 child: ElevatedButton(
-                  onPressed: _isGrading ? null : _startGrading,
+                  onPressed: _isGrading || _backFile == null ? null : _startGrading,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: Colors.deepPurple,
                     foregroundColor: Colors.white,
@@ -227,7 +225,11 @@ class _ReviewScreenState extends State<ReviewScreen> {
                           ),
                         )
                       : Text(
-                          _error != null ? "RETRY" : "CONFIRM & GRADE",
+                          _backFile == null
+                              ? "ADD BACK IMAGE TO CONTINUE"
+                              : _error != null
+                                  ? "RETRY"
+                                  : "CONFIRM & GRADE",
                           style: const TextStyle(
                             fontSize: 16,
                             fontWeight: FontWeight.bold,
@@ -243,21 +245,14 @@ class _ReviewScreenState extends State<ReviewScreen> {
   }
 
   Widget _buildProgressPanel() {
-    // Determine visible steps (skip step 3 if no back image)
-    final List<String> visibleSteps = [
+    const List<String> visibleSteps = [
       'Create session',
       'Upload front',
-      if (_backFile != null) 'Upload back',
+      'Upload back',
       'Analyze card',
     ];
-    final int totalVisible = visibleSteps.length;
-
-    // Map _gradingStep (1-5) to visible step index
-    int currentVisible = _gradingStep;
-    if (_backFile == null && _gradingStep >= 3) {
-      // Collapsed: step 3 (back) becomes 3 (analyze), step 4 is still analyze
-      currentVisible = _gradingStep - 1;
-    }
+    const int totalVisible = 4;
+    final int currentVisible = _gradingStep;
 
     return AnimatedContainer(
       duration: const Duration(milliseconds: 300),
