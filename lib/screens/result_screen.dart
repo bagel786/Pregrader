@@ -31,6 +31,10 @@ class ResultScreen extends StatelessWidget {
       confidenceLevel = confidenceData;
     }
 
+    // Grading status
+    final gradingStatus = grading['grading_status']?.toString() ?? "success";
+    final gradingStatusMessage = grading['grading_status_message']?.toString();
+
     // Safe type check — avoids runtime crash if API returns unexpected type
     final subScores = grading['sub_scores'] is Map
         ? Map<String, dynamic>.from(grading['sub_scores'] as Map)
@@ -38,57 +42,20 @@ class ResultScreen extends StatelessWidget {
     final explanations = grading['explanations'] is List
         ? grading['explanations'] as List<dynamic>
         : <dynamic>[];
+    final recommendations = grading['recommendations'] is List
+        ? grading['recommendations'] as List<dynamic>
+        : <dynamic>[];
 
     // If finalScore is null, the API returned invalid data — show error state
     if (finalScore == null) {
-      return Scaffold(
-        backgroundColor: Colors.black,
-        appBar: AppBar(
-          title: const Text("Grading Result"),
-          backgroundColor: Colors.transparent,
-          automaticallyImplyLeading: false,
-          actions: [
-            IconButton(
-              icon: const Icon(Icons.close),
-              onPressed: () =>
-                  Navigator.of(context).popUntil((route) => route.isFirst),
-            ),
-          ],
-        ),
-        body: Center(
-          child: Padding(
-            padding: const EdgeInsets.all(32),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const Icon(Icons.error_outline, color: Colors.redAccent, size: 64),
-                const SizedBox(height: 16),
-                const Text(
-                  "Could not read grading result",
-                  style: TextStyle(color: Colors.white, fontSize: 18),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 8),
-                const Text(
-                  "The server returned an unexpected response. Please try again.",
-                  style: TextStyle(color: Colors.white54, fontSize: 14),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 32),
-                OutlinedButton(
-                  onPressed: () =>
-                      Navigator.of(context).popUntil((route) => route.isFirst),
-                  style: OutlinedButton.styleFrom(
-                    side: const BorderSide(color: Colors.white24),
-                    padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 32),
-                  ),
-                  child: const Text("Try Again", style: TextStyle(color: Colors.white)),
-                ),
-              ],
-            ),
-          ),
-        ),
-      );
+      return _buildErrorScreen(context, "Could not read grading result",
+          "The server returned an unexpected response. Please try again.");
+    }
+
+    // If grading was refused due to low confidence — show unable-to-grade state
+    if (gradingStatus == "refused") {
+      return _buildRefusedScreen(
+          context, gradingStatusMessage, recommendations);
     }
 
     return Scaffold(
@@ -164,6 +131,37 @@ class ResultScreen extends StatelessWidget {
                 ],
               ),
             ),
+
+            // Low confidence warning banner
+            if (gradingStatus == "low_confidence") ...[
+              Container(
+                padding: const EdgeInsets.all(12),
+                margin: const EdgeInsets.only(bottom: 20),
+                decoration: BoxDecoration(
+                  color: Colors.orange.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(12),
+                  border:
+                      Border.all(color: Colors.orange.withValues(alpha: 0.6)),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.warning_amber_rounded,
+                        color: Colors.orange, size: 24),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        gradingStatusMessage ??
+                            'Low confidence result — consider retaking photos.',
+                        style: const TextStyle(
+                            color: Colors.orange,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w500),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
 
             // 1. Grade Badge
             Container(
@@ -268,6 +266,148 @@ class ResultScreen extends StatelessWidget {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  Scaffold _buildErrorScreen(
+      BuildContext context, String title, String subtitle) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        title: const Text("Grading Result"),
+        backgroundColor: Colors.transparent,
+        automaticallyImplyLeading: false,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.close),
+            onPressed: () =>
+                Navigator.of(context).popUntil((route) => route.isFirst),
+          ),
+        ],
+      ),
+      body: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.error_outline, color: Colors.redAccent, size: 64),
+              const SizedBox(height: 16),
+              Text(
+                title,
+                style: const TextStyle(color: Colors.white, fontSize: 18),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 8),
+              Text(
+                subtitle,
+                style: const TextStyle(color: Colors.white54, fontSize: 14),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 32),
+              OutlinedButton(
+                onPressed: () =>
+                    Navigator.of(context).popUntil((route) => route.isFirst),
+                style: OutlinedButton.styleFrom(
+                  side: const BorderSide(color: Colors.white24),
+                  padding:
+                      const EdgeInsets.symmetric(vertical: 16, horizontal: 32),
+                ),
+                child: const Text("Try Again",
+                    style: TextStyle(color: Colors.white)),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Scaffold _buildRefusedScreen(BuildContext context, String? message,
+      List<dynamic> recommendations) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        title: const Text("Grading Result"),
+        backgroundColor: Colors.transparent,
+        automaticallyImplyLeading: false,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.close),
+            onPressed: () =>
+                Navigator.of(context).popUntil((route) => route.isFirst),
+          ),
+        ],
+      ),
+      body: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.warning_amber_rounded,
+                  color: Colors.orange, size: 64),
+              const SizedBox(height: 16),
+              const Text(
+                "Unable to Grade",
+                style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 22,
+                    fontWeight: FontWeight.bold),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 12),
+              Text(
+                message ??
+                    "Image quality too low for reliable analysis. Please retake photos with better lighting.",
+                style: const TextStyle(color: Colors.white70, fontSize: 14),
+                textAlign: TextAlign.center,
+              ),
+              if (recommendations.isNotEmpty) ...[
+                const SizedBox(height: 24),
+                const Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    "Suggestions:",
+                    style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                ...recommendations.map((r) => Padding(
+                      padding: const EdgeInsets.only(bottom: 6),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Icon(Icons.lightbulb_outline,
+                              color: Colors.orange, size: 18),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(r.toString(),
+                                style: const TextStyle(
+                                    color: Colors.white70, fontSize: 13)),
+                          ),
+                        ],
+                      ),
+                    )),
+              ],
+              const SizedBox(height: 32),
+              ElevatedButton.icon(
+                onPressed: () =>
+                    Navigator.of(context).popUntil((route) => route.isFirst),
+                icon: const Icon(Icons.camera_alt),
+                label: const Text("Try Again"),
+                style: ElevatedButton.styleFrom(
+                  padding:
+                      const EdgeInsets.symmetric(vertical: 16, horizontal: 32),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

@@ -1,4 +1,5 @@
 from fastapi import FastAPI, HTTPException, Query, UploadFile, File
+from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 import httpx
@@ -95,6 +96,42 @@ else:
 
 logger.info("Backend initialization complete")
 logger.info("="*60)
+
+
+@app.get("/privacy-policy", response_class=HTMLResponse)
+async def privacy_policy():
+    """Privacy policy page for App Store Connect."""
+    return """<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Privacy Policy - Pokemon Pregrader</title>
+<style>body{font-family:-apple-system,sans-serif;max-width:700px;margin:0 auto;padding:20px;line-height:1.6;color:#333}
+h1{color:#7B2CBF}h2{color:#9D4EDD;margin-top:24px}p{margin:8px 0}</style></head>
+<body>
+<h1>Privacy Policy</h1>
+<p><em>Last updated: March 2026</em></p>
+
+<h2>Data Collection</h2>
+<p>Pokemon Pregrader does not require an account and does not collect any personal information. We do not ask for your name, email, location, or any other identifying data.</p>
+
+<h2>Image Handling</h2>
+<p>When you scan a card, your photo is uploaded to our server for analysis. Images are stored temporarily for up to 15 minutes to complete the grading process, then automatically and permanently deleted. Images are never saved to a database, shared with other users, or used for any purpose other than generating your grade.</p>
+
+<h2>Third-Party Services</h2>
+<p>In some cases, if our primary image analysis cannot confidently detect your card, your image may be sent to Anthropic's Claude Vision API as a fallback for improved detection. Anthropic's use of this data is governed by their own privacy policy. We also query the Pokemon TCG API (pokemontcg.io) for card metadata — no user data or images are sent to this service.</p>
+
+<h2>Logging</h2>
+<p>Our server maintains technical diagnostic logs (processing times, error messages, detection methods used). These logs do not contain any personally identifiable information such as IP addresses, device identifiers, or user data.</p>
+
+<h2>Analytics &amp; Tracking</h2>
+<p>Pokemon Pregrader does not use any analytics services, advertising frameworks, cookies, or user tracking of any kind. We do not track you across apps or websites.</p>
+
+<h2>Data Retention</h2>
+<p>All session data is held in memory only and is not persisted to any database. Sessions and associated images are automatically deleted after 15 minutes. When the server restarts, all session data is cleared.</p>
+
+<h2>Your Rights</h2>
+<p>Since we do not collect or store personal data, there is no personal data to access, correct, or delete. If you have questions or concerns about your privacy, please contact us using the support information in the App Store listing.</p>
+</body></html>"""
 
 
 @app.get("/health")

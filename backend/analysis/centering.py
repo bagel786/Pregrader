@@ -392,8 +392,8 @@ def calculate_centering_ratios(
             f"(L={left:.0f}, R={right:.0f}, T={top:.0f}, B={bottom:.0f}). "
             f"Likely a detection artifact. Using moderate default."
         )
-        # Use a moderate default rather than a wildly wrong score
-        score = 7.0
+        # Use conservative default rather than a wildly wrong score
+        score = 5.0
         detection_method = f"{detection_method}_fallback"
     else:
         # Calculate score normally

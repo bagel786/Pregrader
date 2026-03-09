@@ -68,6 +68,16 @@ class HomeScreen extends StatelessWidget {
                 foregroundColor: theme.colorScheme.primary,
               ),
             ),
+            TextButton.icon(
+              onPressed: () {
+                Navigator.pushNamed(context, AppRoutes.privacyPolicy);
+              },
+              icon: const Icon(Icons.privacy_tip_outlined, size: 18),
+              label: const Text('Privacy Policy'),
+              style: TextButton.styleFrom(
+                foregroundColor: theme.colorScheme.primary,
+              ),
+            ),
           ],
         ),
       ),

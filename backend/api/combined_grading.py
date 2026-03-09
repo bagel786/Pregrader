@@ -63,7 +63,7 @@ def analyze_single_side(
             results["centering"] = calculate_centering_ratios(image_path, debug_output_path=centering_path)
         except Exception as e:
             results["errors"].append(f"Centering failed: {str(e)}")
-            results["centering"] = {"error": str(e), "grade_estimate": 5.0}
+            results["centering"] = {"error": str(e), "grade_estimate": 5.0, "confidence": 0.3}
     
     # Corners
     try:
@@ -125,7 +125,7 @@ def combine_front_back_analysis(
     if front_analysis.get("centering") and "error" not in front_analysis["centering"]:
         combined["centering"] = front_analysis["centering"]
     else:
-        combined["centering"] = {"grade_estimate": 5.0, "error": "Could not analyze centering"}
+        combined["centering"] = {"grade_estimate": 5.0, "confidence": 0.3, "error": "Could not analyze centering"}
         combined["warnings"].append("Centering could not be analyzed")
     
     # 2. CORNERS - Worst-case biased blend (70% worst side, 30% better side)
@@ -217,7 +217,7 @@ def combine_front_back_analysis(
             corners_data=combined["corners"],
             edges_data=combined["edges"],
             surface_data=combined["surface"].get("surface", {"score": 5.0}),
-            centering_confidence=combined["centering"].get("confidence", 0.8),
+            centering_confidence=combined["centering"].get("confidence", 0.5),
         )
         combined["grade"] = grading_result
     except Exception as e:
@@ -227,7 +227,7 @@ def combine_front_back_analysis(
             "final_score": 0
         }
         combined["warnings"].append(f"Grading calculation failed: {str(e)}")
-    
+
     return combined
 
 
@@ -271,7 +271,7 @@ def grade_card_session(
                 corners_data=combined["corners"] if combined["corners"] else {"corners": {}, "overall_grade": 5.0},
                 edges_data=combined["edges"] if combined["edges"] else {"score": 5.0},
                 surface_data=combined["surface"].get("surface", {"score": 5.0}) if combined["surface"] else {"score": 5.0},
-                centering_confidence=centering.get("confidence", 0.8) if centering else 0.8,
+                centering_confidence=centering.get("confidence", 0.5) if centering else 0.3,
             )
             combined["grade"] = grading_result
         except Exception as e:

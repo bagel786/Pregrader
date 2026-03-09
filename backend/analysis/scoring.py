@@ -109,7 +109,7 @@ class GradingEngine:
         corners_data: Dict[str, Any],
         edges_data: Dict[str, Any],
         surface_data: Dict[str, Any],
-        centering_confidence: float = 0.8,
+        centering_confidence: float = 0.5,
     ) -> Dict[str, Any]:
         """
         Calculates the final grade with proper calibration and confidence tracking.
@@ -124,11 +124,11 @@ class GradingEngine:
         # Corners: Use overall_grade if available, otherwise calculate from individual scores
         if "overall_grade" in corners_data:
             result.corners_score = corners_data["overall_grade"]
-            result.corners_confidence = corners_data.get("confidence", 0.8)
+            result.corners_confidence = corners_data.get("confidence", 0.5)
         else:
             corners_scores = [c["score"] for c in corners_data["corners"].values()]
             result.corners_score = sum(corners_scores) / len(corners_scores) if corners_scores else 5.0
-            result.corners_confidence = 0.8
+            result.corners_confidence = 0.5
         
         # Extract min corner score - handle both standard dict and enhanced list formats
         if corners_data.get("corners"):
@@ -141,17 +141,17 @@ class GradingEngine:
         # Edges: Use overall_grade if available
         if "overall_grade" in edges_data:
             result.edges_score = edges_data["overall_grade"]
-            result.edges_confidence = edges_data.get("confidence", 0.8)
+            result.edges_confidence = edges_data.get("confidence", 0.5)
         else:
             edges_scores = [e["score"] for e in edges_data["edges"].values()]
             result.edges_score = sum(edges_scores) / len(edges_scores) if edges_scores else 5.0
-            result.edges_confidence = 0.8
+            result.edges_confidence = 0.5
         
         edges_scores = [e["score"] for e in edges_data["edges"].values()] if edges_data.get("edges") else [result.edges_score]
         
         # Surface: Provided score
         result.surface_score = surface_data["score"]
-        result.surface_confidence = surface_data.get("confidence", 0.8)
+        result.surface_confidence = surface_data.get("confidence", 0.5)
         
         # 2. PSA-aligned Weighted Calculation
         # PSA weights corners and edges more heavily than centering and surface
@@ -162,22 +162,23 @@ class GradingEngine:
             result.surface_score * 0.20
         )
         
-        # 3. Damage penalties — kept light since sub-scores already reflect damage.
-        # Only penalize for truly severe/concentrated damage patterns.
+        # 3. Damage penalties — penalize severe/concentrated damage patterns.
         damage_penalty = 0.0
 
-        # Corner damage penalty — only for severe damage
-        if min_corner <= 5.0:
-            damage_penalty += 0.5  # Severe corner damage
+        # Corner damage penalty
+        if min_corner <= 3.0:
+            damage_penalty += 1.5  # Destroyed corner
+        elif min_corner <= 5.0:
+            damage_penalty += 0.8  # Severe corner damage
         elif min_corner <= 6.0:
-            damage_penalty += 0.2  # Significant corner damage
+            damage_penalty += 0.3  # Significant corner damage
 
-        # Surface damage penalty — only for creases/dents
+        # Surface damage penalty — creases/dents
         if surface_data.get("major_damage_detected", False):
-            damage_penalty += 0.5  # Crease/dent detected
+            damage_penalty += 1.0  # Crease/dent detected
 
         # Cap total penalty
-        damage_penalty = min(damage_penalty, 1.0)
+        damage_penalty = min(damage_penalty, 2.5)
 
         # Apply penalty
         final_score = weighted_score - damage_penalty
@@ -213,10 +214,21 @@ class GradingEngine:
         else:
             confidence_level = "Low"
         
-        # 6. Generate explanations and recommendations
+        # 6. Determine grading status based on confidence
+        if result.overall_confidence < 0.4:
+            grading_status = "refused"
+            grading_status_message = "Unable to grade — image quality too low for reliable analysis. Please retake photos with better lighting and ensure the card fills the frame."
+        elif result.overall_confidence < 0.6:
+            grading_status = "low_confidence"
+            grading_status_message = "Grade provided with low confidence — consider retaking photos for a more accurate result."
+        else:
+            grading_status = "success"
+            grading_status_message = None
+
+        # 7. Generate explanations and recommendations
         result.explanations = GradingEngine.generate_explanations(result)
         result.recommendations = GradingEngine.generate_recommendations(result)
-        
+
         return {
             "final_score": result.final_score,
             "psa_estimate": result.psa_estimate,
@@ -234,6 +246,8 @@ class GradingEngine:
                 "edges": round(result.edges_confidence, 2),
                 "surface": round(result.surface_confidence, 2)
             },
+            "grading_status": grading_status,
+            "grading_status_message": grading_status_message,
             "explanations": result.explanations,
             "recommendations": result.recommendations,
             "grade_range": f"{max(1, int(grade_label)-1)}-{grade_label}" if float(grade_label) > 1 else "1"

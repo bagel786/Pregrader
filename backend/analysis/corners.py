@@ -28,7 +28,8 @@ def _calculate_corner_score_smooth(whitening_percentage):
         (18.0, 6.0),     # Worn
         (25.0, 5.0),     # Heavy wear
         (35.0, 4.0),     # Severe
-        (float('inf'), 3.0),  # Destroyed
+        (50.0, 2.0),     # Destroyed
+        (float('inf'), 1.0),  # Completely destroyed
     ]
     
     # Linear interpolation
@@ -47,7 +48,7 @@ def _calculate_corner_score_smooth(whitening_percentage):
             score = upper_score - (score_range * pct_position)
             return round(score, 1)
     
-    return 3.0  # Fallback for extreme damage
+    return 1.0  # Fallback for extreme damage
 
 
 def calculate_corner_grade(corner_scores):
@@ -62,7 +63,7 @@ def calculate_corner_grade(corner_scores):
         Final corner grade
     """
     if not corner_scores or len(corner_scores) != 4:
-        return 7.0  # Conservative default
+        return 5.0  # Conservative default
     
     # Average all corners
     avg_score = sum(corner_scores) / len(corner_scores)
@@ -207,14 +208,14 @@ def analyze_corner_wear(image_path: str) -> dict:
             roi_mask = card_mask[y1:y2, x1:x2]
             
             if roi.size == 0 or roi_mask.size == 0:
-                results[name] = {"score": 7.0, "whitening_pixels": 0, "note": "Error extracting ROI"}
+                results[name] = {"score": 5.0, "whitening_pixels": 0, "note": "Error extracting ROI", "fallback": True}
                 continue
 
             # Mask the ROI to only include pixels inside the card
             # Set background pixels to the median card color (to not affect scoring)
             if cv2.countNonZero(roi_mask) < roi.size // 6:
                 # Less than ~17% of ROI is inside card - unreliable
-                results[name] = {"score": 7.0, "whitening_pixels": 0, "note": "ROI mostly outside card"}
+                results[name] = {"score": 5.0, "whitening_pixels": 0, "note": "ROI mostly outside card", "fallback": True}
                 continue
             
             # Apply mask: zero out background pixels
@@ -224,7 +225,7 @@ def analyze_corner_wear(image_path: str) -> dict:
             # Create a cropped version with just card pixels for coloring
             card_pixels_mask = roi_mask > 0
             if not np.any(card_pixels_mask):
-                results[name] = {"score": 7.0, "whitening_pixels": 0, "note": "No card pixels in ROI"}
+                results[name] = {"score": 5.0, "whitening_pixels": 0, "note": "No card pixels in ROI", "fallback": True}
                 continue
             
             # Use adaptive whitening detection
@@ -249,9 +250,15 @@ def analyze_corner_wear(image_path: str) -> dict:
         overall_grade = calculate_corner_grade(corner_scores)
         
         # Confidence based on ROI extraction success
-        confidence = 1.0
-        if any(c.get("note") for c in results.values()):
-            confidence = 0.6  # Had issues extracting some corners
+        fallback_count = sum(1 for c in results.values() if c.get("fallback"))
+        if fallback_count >= 3:
+            confidence = 0.3  # Most corners failed
+        elif fallback_count >= 1:
+            confidence = 0.5  # Some corners failed
+        elif any(c.get("note") for c in results.values()):
+            confidence = 0.6  # Had minor issues
+        else:
+            confidence = 1.0
         
         logger.info(
             f"Corner analysis: scores={[c['score'] for c in results.values()]}, "

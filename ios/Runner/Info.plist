@@ -47,12 +47,16 @@
 	<true/>
 	<key>NSAppTransportSecurity</key>
 	<dict>
-		<key>NSAllowsArbitraryLoads</key>
-		<true/>
+		<key>NSExceptionDomains</key>
+		<dict>
+			<key>pregrader-production.up.railway.app</key>
+			<dict>
+				<key>NSIncludesSubdomains</key>
+				<true/>
+			</dict>
+		</dict>
 	</dict>
 	<key>NSCameraUsageDescription</key>
 	<string>We need camera access to scan your Pokemon cards.</string>
-	<key>NSMicrophoneUsageDescription</key>
-	<string>We need microphone access for video capture.</string>
 </dict>
 </plist>

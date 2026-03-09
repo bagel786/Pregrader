@@ -62,7 +62,7 @@ class EnhancedCornerDetector:
         for i, (corner_img, corner_mask, is_valid) in enumerate(corner_regions):
             if not is_valid:
                 # Corner region extends beyond card - use conservative score
-                corner_scores.append(7.0)
+                corner_scores.append(5.0)
                 false_positives += 1
                 continue
             
@@ -74,8 +74,8 @@ class EnhancedCornerDetector:
             )
             
             if is_false_positive:
-                # Detected damage is likely background/artifact
-                score = max(score, 8.0)  # Override with higher score
+                # Detected damage is likely background/artifact — modest bump
+                score = min(10.0, score + 2.0)
                 false_positives += 1
             
             corner_scores.append(score)
@@ -389,8 +389,12 @@ class EnhancedCornerDetector:
             return 8.0 - (white_pct - 6.0) * (1.0 / 6.0)  # 6-12% → 8.0-7.0
         elif white_pct < 20.0:
             return 7.0 - (white_pct - 12.0) * (1.0 / 8.0)  # 12-20% → 7.0-6.0
+        elif white_pct < 35.0:
+            return 6.0 - (white_pct - 20.0) * (2.0 / 15.0)  # 20-35% → 6.0-4.0
+        elif white_pct < 50.0:
+            return 4.0 - (white_pct - 35.0) * (2.0 / 15.0)  # 35-50% → 4.0-2.0
         else:
-            return max(4.0, 6.0 - (white_pct - 20.0) * 0.05)  # 20%+ heavy damage
+            return max(1.0, 2.0 - (white_pct - 50.0) * 0.02)  # 50%+ → 2.0-1.0
     
     def _calculate_overall_grade(self, corner_scores: List[float]) -> float:
         """Calculate overall grade — weighted blend of average and worst corner"""

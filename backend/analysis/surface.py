@@ -138,7 +138,7 @@ def analyze_surface_damage(image_path: str) -> dict:
         
         # Apply major damage penalty (creases, dents, stains)
         if major_damage_detected:
-            score = min(score, 5.0)  # Creases/dents cap at 5
+            score = min(score, 3.0)  # Creases/dents cap at 3
         
         # Calculate confidence based on excluded regions
         glare_pixels = cv2.countNonZero(glare_mask)

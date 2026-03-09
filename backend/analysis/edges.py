@@ -316,14 +316,14 @@ def analyze_edge_wear(
         # not a real card boundary. Return moderate default with low confidence.
         return {
             "success": True,
-            "score": 7.0,
-            "overall_grade": 7.0,
-            "grade_estimate": 7.0,
+            "score": 5.0,
+            "overall_grade": 5.0,
+            "grade_estimate": 5.0,
             "overall_whitening_pct": 0.0,
             "condition": "Edge analysis inconclusive - card boundary not detected",
             "worn_edges_list": [],
             "worn_edge_count": 0,
-            "edges": {e: {"score": 7.0} for e in ['top', 'right', 'bottom', 'left']},
+            "edges": {e: {"score": 5.0} for e in ['top', 'right', 'bottom', 'left']},
             "detailed_edges": {},
             "confidence": 0.3,
         }
