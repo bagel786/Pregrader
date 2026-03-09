@@ -190,8 +190,8 @@ class EnhancedCornerDetector:
             valid_pixels = np.sum(corner_mask > 0)
             total_pixels = corner_size * corner_size
             validity_ratio = valid_pixels / total_pixels
-            
-            is_valid = validity_ratio > 0.4  # At least 40% of corner is on card
+
+            is_valid = validity_ratio > 0.2  # At least 20% of corner is on card
             
             corner_regions.append((corner_img, corner_mask, is_valid))
         

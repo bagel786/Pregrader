@@ -166,11 +166,11 @@ class GradingEngine:
         damage_penalty = 0.0
 
         # Corner damage penalty
-        if min_corner <= 3.0:
+        if min_corner <= 2.5:
             damage_penalty += 1.5  # Destroyed corner
-        elif min_corner <= 5.0:
+        elif min_corner <= 4.0:
             damage_penalty += 0.8  # Severe corner damage
-        elif min_corner <= 6.0:
+        elif min_corner <= 5.5:
             damage_penalty += 0.3  # Significant corner damage
 
         # Surface damage penalty — creases/dents
