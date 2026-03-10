@@ -7,7 +7,7 @@ from typing import Optional, Tuple
 
 # Pokémon card dimensions (standard TCG size)
 POKEMON_CARD_ASPECT_RATIO = 2.5 / 3.5  # Width / Height = ~0.714
-ASPECT_RATIO_TOLERANCE = 0.10  # ±10% tolerance
+ASPECT_RATIO_TOLERANCE = 0.08  # ±8% tolerance
 
 
 def enhance_card_image(image: np.ndarray) -> np.ndarray:

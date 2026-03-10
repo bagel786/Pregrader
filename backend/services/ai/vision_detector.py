@@ -228,7 +228,7 @@ Important:
         self,
         image_path: str,
         ai_corners: np.ndarray,
-        search_radius: int = 30
+        search_radius: int = 50
     ) -> Optional[np.ndarray]:
         """
         Use OpenCV to refine AI-detected corners

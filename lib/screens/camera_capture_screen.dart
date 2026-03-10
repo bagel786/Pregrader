@@ -34,10 +34,10 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen> {
   Rect? _detectedCard;
   // Smoothing buffer for detected rects (last N frames)
   final List<Rect> _rectHistory = [];
-  static const int _smoothingFrames = 5;
+  static const int _smoothingFrames = 8;
   // Track consecutive misses to avoid instant flicker
   int _missCount = 0;
-  static const int _missThreshold = 3;
+  static const int _missThreshold = 6;
 
   bool _isDetecting = false;
 
@@ -82,8 +82,8 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen> {
   }
 
   void _onCameraImage(CameraImage camImage) {
-    // Throttle to ~2fps
-    if (_frameSkip++ % 15 != 0) return;
+    // Throttle to ~4fps
+    if (_frameSkip++ % 8 != 0) return;
     if (_isDetecting) return;
     _isDetecting = true;
 
@@ -200,7 +200,7 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen> {
     if (rects.length == 1) return rects.first;
     double l = 0, t = 0, r = 0, b = 0, totalWeight = 0;
     for (int i = 0; i < rects.length; i++) {
-      final weight = (i + 1).toDouble(); // newer frames get higher weight
+      final weight = math.pow(2.0, i).toDouble(); // exponential: newer frames dominate strongly
       l += rects[i].left * weight;
       t += rects[i].top * weight;
       r += rects[i].right * weight;
@@ -327,9 +327,12 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen> {
 
       // Run Vision on the baked image
       Rect? cardRect;
+      double cropConfidence = 0.0;
       final visionResult = await CardDetectorService.detectRectangle(bakedPath);
-      if (visionResult != null && visionResult.confidence > 0.3) {
+      if (visionResult != null && visionResult.confidence > 0.25) {
         cardRect = visionResult.boundingBox;
+        cropConfidence = visionResult.confidence;
+        debugPrint('[CropDebug] Using Vision-on-still (confidence=${visionResult.confidence.toStringAsFixed(2)})');
       }
 
       // Fallback: use last live-stream detected rect (Vision coords in portrait space)
@@ -338,6 +341,8 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen> {
       final bool usesCoverMapping = cardRect == null;
       if (cardRect == null && _detectedCard != null) {
         cardRect = _detectedCard;
+        cropConfidence = 0.35;
+        debugPrint('[CropDebug] Using live-stream rect fallback');
       }
 
       // Fallback: static guide rect
@@ -349,6 +354,8 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen> {
           guideRect.right / screenWidth,
           guideRect.bottom / screenHeight,
         );
+        cropConfidence = 0.0;
+        debugPrint('[CropDebug] Using static guide rect fallback');
       }
 
       int cropX, cropY, cropW, cropH;
@@ -390,9 +397,10 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen> {
         cropH = (cardRect.height * visibleH).round();
       }
 
-      // Add 2% padding
-      final padX = (cropW * 0.02).round();
-      final padY = (cropH * 0.02).round();
+      // Confidence-aware padding: high confidence → tight crop, low → generous fallback
+      final padFactor = cropConfidence > 0.7 ? 0.01 : cropConfidence > 0.4 ? 0.03 : 0.05;
+      final padX = (cropW * padFactor).round();
+      final padY = (cropH * padFactor).round();
 
       final finalX = (cropX - padX).clamp(0, imageWidth - 1);
       final finalY = (cropY - padY).clamp(0, imageHeight - 1);
