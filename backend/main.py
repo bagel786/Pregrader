@@ -370,11 +370,11 @@ async def upload_front_image(
                 enhanced = analyze_corners_enhanced(corrected_img, side="front")
                 enhanced_confidence = enhanced.get("confidence", 0.0)
                 basic_grade = front_analysis.get("corners", {}).get("overall_grade", 5.0)
-                if enhanced_confidence >= 0.5:
+                if enhanced_confidence >= 0.7:
                     front_analysis["corners"] = enhanced
                     logger.info(f"[{session_id}] Enhanced corners accepted: {enhanced.get('overall_grade', 0):.1f} (conf={enhanced_confidence:.2f})")
                 else:
-                    logger.info(f"[{session_id}] Enhanced corners rejected (conf={enhanced_confidence:.2f} < 0.5), keeping basic: {basic_grade:.1f}")
+                    logger.info(f"[{session_id}] Enhanced corners rejected (conf={enhanced_confidence:.2f} < 0.7), keeping basic: {basic_grade:.1f}")
             except Exception as e:
                 logger.warning(f"[{session_id}] Enhanced corners failed, keeping basic: {e}")
         
@@ -500,11 +500,11 @@ async def upload_back_image(
                 enhanced = analyze_corners_enhanced(detection["corrected_image"], side="back")
                 enhanced_confidence = enhanced.get("confidence", 0.0)
                 basic_grade = back_analysis.get("corners", {}).get("overall_grade", 5.0)
-                if enhanced_confidence >= 0.5:
+                if enhanced_confidence >= 0.7:
                     back_analysis["corners"] = enhanced
                     logger.info(f"[{session_id}] Enhanced back corners accepted: {enhanced.get('overall_grade', 0):.1f} (conf={enhanced_confidence:.2f})")
                 else:
-                    logger.info(f"[{session_id}] Enhanced back corners rejected (conf={enhanced_confidence:.2f} < 0.5), keeping basic: {basic_grade:.1f}")
+                    logger.info(f"[{session_id}] Enhanced back corners rejected (conf={enhanced_confidence:.2f} < 0.7), keeping basic: {basic_grade:.1f}")
             except Exception as e:
                 logger.warning(f"[{session_id}] Enhanced back corners failed, keeping basic: {e}")
         

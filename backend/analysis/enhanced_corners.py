@@ -417,7 +417,7 @@ class EnhancedCornerDetector:
         if score_std > 2.0:
             confidence -= 0.1
         
-        return max(0.5, min(1.0, confidence))
+        return max(0.3, min(1.0, confidence))
 
 
 # Integration function for existing backend

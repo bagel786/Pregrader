@@ -116,7 +116,7 @@ def analyze_surface_damage(image_path: str) -> dict:
         scratch_count = len(valid_scratches)
         
         # Major Damage (Crease/Dent/Stain) - resolution-independent
-        _, dark_mask = cv2.threshold(card_gray, 40, 255, cv2.THRESH_BINARY_INV)
+        _, dark_mask = cv2.threshold(card_gray, 25, 255, cv2.THRESH_BINARY_INV)
         dark_mask = cv2.bitwise_and(dark_mask, cv2.bitwise_not(exclusion_mask))
         
         dark_contours, _ = cv2.findContours(dark_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
