@@ -42,6 +42,31 @@ class GradingEngine:
     ]
     
     @staticmethod
+    def _calculate_grade_range(final_score: float, grade_label: str) -> str:
+        """
+        Return a grade range string when the score is near a PSA grade boundary.
+
+        A score within 0.3 of a boundary (e.g. 9.3 near the 9.5 threshold)
+        indicates measurement uncertainty; the true grade could be one step higher.
+        This is most important near the PSA 9/10 boundary where value diverges sharply.
+        """
+        BOUNDARY_MARGIN = 0.3
+        brackets = GradingEngine.GRADE_BRACKETS
+
+        # Find the threshold that separates current grade from the grade above
+        current_idx = next(
+            (i for i, (thresh, lbl) in enumerate(brackets) if lbl == grade_label),
+            None
+        )
+
+        if current_idx is not None and current_idx > 0:
+            upper_threshold, upper_label = brackets[current_idx - 1]
+            if final_score >= upper_threshold - BOUNDARY_MARGIN:
+                return f"{grade_label}-{upper_label}"
+
+        return grade_label
+
+    @staticmethod
     def generate_explanations(result: GradingResult) -> List[str]:
         """Generate human-readable explanations for the grade."""
         explanations = []
@@ -110,6 +135,7 @@ class GradingEngine:
         edges_data: Dict[str, Any],
         surface_data: Dict[str, Any],
         centering_confidence: float = 0.5,
+        quality_assessment: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
         """
         Calculates the final grade with proper calibration and confidence tracking.
@@ -162,27 +188,21 @@ class GradingEngine:
             result.surface_score * 0.20
         )
         
-        # 3. Damage penalties — penalize severe/concentrated damage patterns.
+        # 3. Damage penalties — only for damage not already captured by component scores.
         damage_penalty = 0.0
 
-        # Corner damage penalty
-        if min_corner <= 2.5:
-            damage_penalty += 1.5  # Destroyed corner
-        elif min_corner <= 4.0:
-            damage_penalty += 0.8  # Severe corner damage
-        elif min_corner <= 5.5:
-            damage_penalty += 0.3  # Significant corner damage
-
-        # Surface damage penalty — creases/dents
+        # Surface damage penalty — creases/dents (additive damage not in scratch score)
         if surface_data.get("major_damage_detected", False):
             damage_penalty += 1.0  # Crease/dent detected
 
-        # Cap total penalty
-        damage_penalty = min(damage_penalty, 2.5)
-
         # Apply penalty
         final_score = weighted_score - damage_penalty
-        
+
+        # Floor: final score cannot be more than 0.5 below the worst individual corner.
+        # Corner scores already encode whitening damage; this prevents other components
+        # from dragging the grade below what the worst corner warrants.
+        final_score = max(final_score, min_corner - 0.5)
+
         # NO 1.25x BOOST - properly calibrated thresholds
         final_score = max(min(final_score, 10.0), 1.0)
         final_score = round(final_score, 1)
@@ -198,10 +218,45 @@ class GradingEngine:
         
         result.psa_estimate = grade_label
         
-        # 5. Calculate Overall Confidence (PSA-aligned weights)
+        # 4b. Apply Claude Vision quality signal multipliers to per-component confidence.
+        # These signals are discarded after detection otherwise; mapping them to
+        # confidence adjustments propagates what the AI observed about image quality.
+        if quality_assessment:
+            blur = quality_assessment.get("blur", "sharp")
+            lighting = quality_assessment.get("lighting", "good")
+            angle = quality_assessment.get("angle", "straight")
+
+            if blur == "heavy":
+                result.centering_confidence *= 0.70
+                result.corners_confidence *= 0.70
+                result.edges_confidence *= 0.70
+                result.surface_confidence *= 0.70
+            elif blur == "slight":
+                result.centering_confidence *= 0.85
+                result.corners_confidence *= 0.85
+                result.edges_confidence *= 0.85
+                result.surface_confidence *= 0.85
+
+            if lighting == "poor":
+                result.edges_confidence *= 0.75
+                result.surface_confidence *= 0.75
+            elif lighting == "glare":
+                result.surface_confidence *= 0.70
+
+            if angle == "heavy":
+                result.centering_confidence *= 0.60
+            elif angle == "slight":
+                result.centering_confidence *= 0.80
+
+        # 5. Calculate Overall Confidence
+        # Confidence weights are decoupled from score weights — they reflect how
+        # reliably each component can be measured, not how much it affects the grade.
+        # Surface has high measurement variance (lighting, holo, glare) → lower weight.
+        # Corners whitening in a well-defined ROI is geometrically reliable → higher weight.
+        # Centering measurement noise is moderate → slightly lower than corners.
         result.overall_confidence = (
-            result.centering_confidence * 0.20 +
-            result.corners_confidence * 0.30 +
+            result.centering_confidence * 0.15 +
+            result.corners_confidence * 0.35 +
             result.edges_confidence * 0.30 +
             result.surface_confidence * 0.20
         )
@@ -250,5 +305,5 @@ class GradingEngine:
             "grading_status_message": grading_status_message,
             "explanations": result.explanations,
             "recommendations": result.recommendations,
-            "grade_range": f"{max(1, int(grade_label)-1)}-{grade_label}" if float(grade_label) > 1 else "1"
+            "grade_range": GradingEngine._calculate_grade_range(final_score, grade_label)
         }

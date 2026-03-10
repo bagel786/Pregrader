@@ -52,43 +52,53 @@ def analyze_whitening_for_front(
 ) -> Tuple[float, int, int]:
     """
     Analyze whitening on card front edges.
-    
+
     Front edges don't have consistent blue - uses brightness
-    relative to border average to detect paper showing through.
-    
+    relative to the card interior (central 20%) to detect paper showing through.
+    Anchoring to the interior prevents heavily-whitened borders from raising
+    their own threshold and hiding the damage being measured.
+
     Args:
         image: BGR image
         border_mask: Binary mask of border region
-        
+
     Returns:
         (whitening_percentage, whitened_pixels, total_pixels)
     """
     if cv2.countNonZero(border_mask) == 0:
         return 0.0, 0, 0
-    
+
     # Convert to LAB for lightness analysis
     lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
     l_channel = lab[:, :, 0]
-    
+
     # Get pixels in border region
     border_pixels = l_channel[border_mask > 0]
-    
+
     if len(border_pixels) == 0:
         return 0.0, 0, 0
-    
-    # Calculate average lightness of border
-    avg_lightness = np.mean(border_pixels)
-    
-    # White pixels are significantly brighter than average
-    # Purely relative threshold — no absolute cap, so light-colored borders
-    # (yellow, white) don't produce massive false positives
-    adaptive_threshold = avg_lightness + 35
-    
+
+    # Use card interior (central 20% region) as stable lightness reference.
+    # Artwork in the centre is unaffected by edge wear, giving a fixed baseline
+    # that does not move with the damage level.
+    h, w = image.shape[:2]
+    y0, y1 = int(h * 0.40), int(h * 0.60)
+    x0, x1 = int(w * 0.40), int(w * 0.60)
+    interior_pixels = l_channel[y0:y1, x0:x1].flatten()
+    if len(interior_pixels) > 0:
+        interior_mean = np.mean(interior_pixels)
+    else:
+        # Fallback: use border mean (old behaviour) if interior slice is empty
+        interior_mean = np.mean(border_pixels)
+
+    # Whitened pixels are significantly brighter than the unaffected interior
+    adaptive_threshold = interior_mean + 35
+
     whitened_pixels = np.sum(border_pixels > adaptive_threshold)
     total_pixels = len(border_pixels)
-    
+
     whitening_percentage = (whitened_pixels / total_pixels) * 100
-    
+
     return whitening_percentage, int(whitened_pixels), total_pixels
 
 
@@ -240,17 +250,22 @@ def split_edges(
 def score_whitening_percentage(whitening_pct: float) -> float:
     """
     Convert whitening percentage to score (1-10).
-    
+
+    The top band uses smooth linear interpolation (0.0–0.5%) rather than
+    a hard step at 0.2%, preventing JPEG noise or lighting variation from
+    randomly flipping a Gem Mint card to 9.5.
+
     Args:
         whitening_pct: Percentage of whitened pixels
-        
+
     Returns:
         Score from 1.0 to 10.0
     """
-    if whitening_pct < 0.2:
+    if whitening_pct < 0.1:
         return 10.0  # Gem Mint
     elif whitening_pct < 0.5:
-        return 9.5
+        # Smooth interpolation: 0.1% → 10.0, 0.5% → 9.5
+        return 10.0 - (whitening_pct - 0.1) / 0.4 * 0.5
     elif whitening_pct < 1.0:
         return 9.0  # Mint
     elif whitening_pct < 1.5:
@@ -355,6 +370,18 @@ def analyze_edge_wear(
         whitening_pct, whitened_px, total_px = analyze_whitening_for_front(image, edge_mask)
         analysis_method = "adaptive_front"
     
+    # Mask out corner ROI footprints so corner whitening isn't counted in edge scores.
+    # Corner ROIs are defined as roi_size px squares at each corner of the card
+    # (matching corners.py: max(30, 4% of smaller dimension)).
+    corner_roi_size = max(30, int(min(h, w) * 0.04))
+    corner_exclusion = np.zeros(image.shape[:2], dtype=np.uint8)
+    # Top-left, top-right, bottom-left, bottom-right footprints
+    corner_exclusion[:corner_roi_size, :corner_roi_size] = 255
+    corner_exclusion[:corner_roi_size, w - corner_roi_size:] = 255
+    corner_exclusion[h - corner_roi_size:, :corner_roi_size] = 255
+    corner_exclusion[h - corner_roi_size:, w - corner_roi_size:] = 255
+    edge_mask = cv2.bitwise_and(edge_mask, cv2.bitwise_not(corner_exclusion))
+
     # Split into individual edges for detailed analysis
     edge_masks = split_edges(edge_mask, image.shape[:2])
     edge_details = {}
@@ -382,8 +409,10 @@ def analyze_edge_wear(
     overall_whitening_score = score_whitening_percentage(whitening_pct)
 
     
-    # Blend overall and worst edge (instead of pure min which is too punishing)
-    final_score = 0.6 * overall_whitening_score + 0.4 * worst_edge_score
+    # 50/50 blend of overall and worst edge.
+    # PSA graders are sensitive to a single bad edge; 50% worst-edge weight
+    # ensures one worn edge meaningfully impacts the final score.
+    final_score = 0.50 * overall_whitening_score + 0.50 * worst_edge_score
     
     # Determine condition description
     if final_score >= 9.5:

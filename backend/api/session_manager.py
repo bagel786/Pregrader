@@ -16,7 +16,7 @@ class GradingSession:
     def __init__(self, session_id: str = None):
         self.session_id = session_id or str(uuid.uuid4())
         self.created_at = datetime.now()
-        self.expires_at = self.created_at + timedelta(minutes=15)
+        self.expires_at = self.created_at + timedelta(minutes=30)
         
         # Image paths
         self.front_image_path: Optional[str] = None
@@ -31,6 +31,10 @@ class GradingSession:
         self.status = "created"  # created, front_uploaded, back_uploaded, analyzing, complete, error
         self.error_message: Optional[str] = None
         
+    def touch(self):
+        """Reset the expiry timer. Called on each upload to count only idle time."""
+        self.expires_at = datetime.now() + timedelta(minutes=30)
+
     def is_expired(self) -> bool:
         """Check if session has expired."""
         return datetime.now() > self.expires_at
@@ -88,16 +92,17 @@ class SessionManager:
             return session
     
     def update_session(self, session_id: str, **kwargs) -> Optional[GradingSession]:
-        """Update session attributes."""
+        """Update session attributes and reset the expiry timer."""
         with self._lock:
             session = self._sessions.get(session_id)
             if session is None:
                 return None
-            
+
+            session.touch()
             for key, value in kwargs.items():
                 if hasattr(session, key):
                     setattr(session, key, value)
-            
+
             return session
     
     def delete_session(self, session_id: str) -> bool:

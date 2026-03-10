@@ -27,9 +27,12 @@ def detect_holographic_regions(image: np.ndarray) -> np.ndarray:
     sq_mean = cv2.blur(l_channel, (kernel_size, kernel_size)) ** 2
     variance_map = mean_sq - sq_mean
     
-    # Threshold variance map - high variance indicates texture/holo
-    # Lowered from 200 to 120 to catch smooth golden/silver gradients
-    holo_mask = (variance_map > 120).astype(np.uint8) * 255
+    # Threshold variance map - high variance indicates texture/holo.
+    # Use the 85th percentile of local variance rather than a fixed value so the
+    # detector adapts to different lighting conditions instead of relying on an
+    # absolute number calibrated for a single environment.
+    variance_threshold = np.percentile(variance_map, 85)
+    holo_mask = (variance_map > variance_threshold).astype(np.uint8) * 255
     
     # Clean up with morphological operations
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
@@ -39,11 +42,18 @@ def detect_holographic_regions(image: np.ndarray) -> np.ndarray:
     return holo_mask
 
 
-def analyze_surface_damage(image_path: str) -> dict:
+def analyze_surface_damage(image_path: str, is_front: bool = True) -> dict:
     """
     Analyzes a Pokemon card image for surface damage including scratches and marks.
     Explicitly flags creases/dents for severe grade capping.
     Now includes holographic region detection to reduce false positives.
+
+    Args:
+        image_path: Path to card image.
+        is_front: True if this is the card front. Front cards have complex dark
+            artwork that can trigger false crease detection, so a stricter threshold
+            is applied. Back cards are a flat blue field where dark blobs reliably
+            indicate real damage.
     """
     try:
         image = cv2.imread(image_path)
@@ -53,22 +63,25 @@ def analyze_surface_damage(image_path: str) -> dict:
         result = find_card_contour(image)
         if not result:
             return {"error": "Card not detected."}
-            
+
         _, (cx, cy, cw, ch) = result
-        
+
         padding = 10
         roi_x = max(0, cx + padding)
         roi_y = max(0, cy + padding)
         roi_w = min(cw - 2 * padding, image.shape[1] - roi_x)
         roi_h = min(ch - 2 * padding, image.shape[0] - roi_y)
-        
+
         card_roi = image[roi_y:roi_y+roi_h, roi_x:roi_x+roi_w]
         card_gray = cv2.cvtColor(card_roi, cv2.COLOR_BGR2GRAY)
-        
+
         # Calculate resolution-independent thresholds
         total_card_area = card_roi.shape[0] * card_roi.shape[1]
         min_scratch_area = total_card_area * 0.0005  # 0.05% of card area
-        major_damage_threshold = total_card_area * 0.0015  # 0.15% of card area
+        # Front card artwork is inherently dark (dark-type Pokémon, black backgrounds).
+        # Use a 4× stricter threshold for fronts to avoid false crease detection.
+        # Back cards are flat blue fields where dark blobs genuinely indicate damage.
+        major_damage_threshold = total_card_area * (0.0015 if not is_front else 0.0060)
         
         # Glare Filtering
         hsv = cv2.cvtColor(card_roi, cv2.COLOR_BGR2HSV)
@@ -76,7 +89,7 @@ def analyze_surface_damage(image_path: str) -> dict:
         upper_glare = np.array([180, 30, 255])
         glare_mask = cv2.inRange(hsv, lower_glare, upper_glare)
         kernel = np.ones((5, 5), np.uint8)
-        glare_mask = cv2.dilate(glare_mask, kernel, iterations=2)
+        glare_mask = cv2.dilate(glare_mask, kernel, iterations=1)
         
         # Holographic Region Detection - NEW
         holo_mask = detect_holographic_regions(card_roi)
@@ -112,30 +125,42 @@ def analyze_surface_damage(image_path: str) -> dict:
                 if aspect < 3.0:
                     continue  # Compact shape — likely texture, not a scratch
             valid_scratches.append(area)
-            
+
         scratch_count = len(valid_scratches)
-        
+        # Total scratch pixel area as a percentage of card area.
+        # A single long crease scores worse than many tiny nicks at the same count.
+        total_scratch_area_pct = (sum(valid_scratches) / total_card_area * 100) if total_card_area > 0 else 0.0
+
         # Major Damage (Crease/Dent/Stain) - resolution-independent
         _, dark_mask = cv2.threshold(card_gray, 25, 255, cv2.THRESH_BINARY_INV)
         dark_mask = cv2.bitwise_and(dark_mask, cv2.bitwise_not(exclusion_mask))
-        
+
         dark_contours, _ = cv2.findContours(dark_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         # Use resolution-independent threshold
-        major_damage = [c for c in dark_contours if cv2.contourArea(c) > major_damage_threshold] 
+        major_damage = [c for c in dark_contours if cv2.contourArea(c) > major_damage_threshold]
         major_damage_detected = len(major_damage) > 0
-        
-        # Relaxed scratch scoring — artwork edges often produce false contours
-        score = 10.0
-        if scratch_count == 0: score = 10.0
-        elif scratch_count <= 3: score = 9.5
-        elif scratch_count <= 8: score = 9.0
-        elif scratch_count <= 15: score = 8.5
-        elif scratch_count <= 25: score = 8.0
-        elif scratch_count <= 40: score = 7.0
-        elif scratch_count <= 60: score = 6.0
-        elif scratch_count <= 80: score = 5.0
-        else: score = 4.0
-        
+
+        # Area-weighted scratch scoring — one long crease scores worse than many tiny nicks.
+        # Bands expressed as % of total card area covered by valid scratch contours.
+        if total_scratch_area_pct == 0:
+            score = 10.0
+        elif total_scratch_area_pct < 0.05:
+            score = 9.5
+        elif total_scratch_area_pct < 0.15:
+            score = 9.0
+        elif total_scratch_area_pct < 0.30:
+            score = 8.5
+        elif total_scratch_area_pct < 0.60:
+            score = 8.0
+        elif total_scratch_area_pct < 1.20:
+            score = 7.0
+        elif total_scratch_area_pct < 2.50:
+            score = 6.0
+        elif total_scratch_area_pct < 4.00:
+            score = 5.0
+        else:
+            score = 4.0
+
         # Apply major damage penalty (creases, dents, stains)
         if major_damage_detected:
             score = min(score, 3.0)  # Creases/dents cap at 3
@@ -143,10 +168,10 @@ def analyze_surface_damage(image_path: str) -> dict:
         # Calculate confidence based on excluded regions
         glare_pixels = cv2.countNonZero(glare_mask)
         glare_percentage = (glare_pixels / total_card_area) * 100 if total_card_area > 0 else 0
-        
+
         # Obscured area reduces confidence
         obscured_percentage = (cv2.countNonZero(exclusion_mask) / total_card_area) * 100 if total_card_area > 0 else 0
-        
+
         confidence = 1.0
         if obscured_percentage > 40:
             confidence = 0.6
@@ -154,6 +179,9 @@ def analyze_surface_damage(image_path: str) -> dict:
             confidence = 0.7
         elif obscured_percentage > 15:
             confidence = 0.85
+        # Large glare mask means a meaningful portion could not be assessed
+        if glare_percentage > 20:
+            confidence = min(confidence, 0.7)
         
         # Generate analysis note
         note = None
@@ -167,6 +195,7 @@ def analyze_surface_damage(image_path: str) -> dict:
             "surface": {
                 "score": score,
                 "scratch_count": scratch_count,
+                "scratch_area_pct": round(total_scratch_area_pct, 3),
                 "major_damage_detected": major_damage_detected,
                 "confidence": confidence,
                 "glare_percentage": round(glare_percentage, 1),

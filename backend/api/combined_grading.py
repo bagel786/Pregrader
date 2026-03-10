@@ -84,7 +84,7 @@ def analyze_single_side(
     
     # Surface
     try:
-        results["surface"] = analyze_surface_damage(image_path)
+        results["surface"] = analyze_surface_damage(image_path, is_front=(detected_side == "front"))
     except Exception as e:
         results["errors"].append(f"Surface failed: {str(e)}")
         results["surface"] = {"error": str(e)}
@@ -196,28 +196,45 @@ def combine_front_back_analysis(
     combined["edges"]["score"] = blended_edge_score
     combined["edges"]["overall_grade"] = blended_edge_score
     
-    # 4. SURFACE - Worst case
+    # 4. SURFACE - 65/35 weighted blend (worse/better), consistent with corners/edges.
+    # Pure worst-case would unfairly penalise cards with a pristine front and
+    # minor back scratch as harshly as fully-damaged cards.
     front_surface = front_analysis.get("surface", {}).get("surface", {})
     back_surface = back_analysis.get("surface", {}).get("surface", {})
-    
+
     front_surface_score = front_surface.get("score", 10.0)
     back_surface_score = back_surface.get("score", 10.0)
-    
+
+    worse_surface_score = min(front_surface_score, back_surface_score)
+    better_surface_score = max(front_surface_score, back_surface_score)
+    blended_surface_score = round(worse_surface_score * 0.65 + better_surface_score * 0.35, 1)
+
+    # Use the worse side's metadata (scratch_count, major_damage_detected, etc.)
+    # but override the score with the blended value.
     if back_surface_score < front_surface_score:
-        combined["surface"] = {"surface": back_surface}
+        combined["surface"] = {"surface": dict(back_surface)}
         combined["surface"]["source"] = "back"
     else:
-        combined["surface"] = {"surface": front_surface}
+        combined["surface"] = {"surface": dict(front_surface)}
         combined["surface"]["source"] = "front"
+
+    # major_damage from either side should propagate (it's genuinely additive)
+    if front_surface.get("major_damage_detected") or back_surface.get("major_damage_detected"):
+        combined["surface"]["surface"]["major_damage_detected"] = True
+
+    combined["surface"]["surface"]["score"] = blended_surface_score
     
     # Calculate final grade
     try:
+        # Propagate Claude Vision quality signals from front detection if available
+        quality_assessment = front_analysis.get("detection", {}).get("quality_assessment")
         grading_result = GradingEngine.calculate_grade(
             centering_score=combined["centering"].get("grade_estimate", 5.0),
             corners_data=combined["corners"],
             edges_data=combined["edges"],
             surface_data=combined["surface"].get("surface", {"score": 5.0}),
             centering_confidence=combined["centering"].get("confidence", 0.5),
+            quality_assessment=quality_assessment,
         )
         combined["grade"] = grading_result
     except Exception as e:
@@ -266,12 +283,14 @@ def grade_card_session(
         # Calculate grade
         centering = combined["centering"]
         try:
+            quality_assessment = front_analysis.get("detection", {}).get("quality_assessment")
             grading_result = GradingEngine.calculate_grade(
                 centering_score=centering.get("grade_estimate", 5.0) if centering else 5.0,
                 corners_data=combined["corners"] if combined["corners"] else {"corners": {}, "overall_grade": 5.0},
                 edges_data=combined["edges"] if combined["edges"] else {"score": 5.0},
                 surface_data=combined["surface"].get("surface", {"score": 5.0}) if combined["surface"] else {"score": 5.0},
                 centering_confidence=centering.get("confidence", 0.5) if centering else 0.3,
+                quality_assessment=quality_assessment,
             )
             combined["grade"] = grading_result
         except Exception as e:

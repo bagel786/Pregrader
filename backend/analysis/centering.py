@@ -132,7 +132,94 @@ def _detect_border_widths_gradient_single(
     return left_width, right_width, top_width, bottom_width
 
 
-def detect_border_widths_gradient(image: np.ndarray) -> Tuple[float, float, float, float]:
+def detect_border_widths_hsv(image: np.ndarray) -> Optional[Tuple[float, float, float, float]]:
+    """
+    HSV outermost-colour border detection.
+
+    Samples the dominant border hue from a thin inward strip (~3px) at each edge,
+    then scans inward until the HSV colour diverges from that hue.  This detects
+    the outermost print border rather than the first strong gradient, which on
+    Pokémon cards (thick border + artwork frame + text) often fires on the wrong edge.
+
+    Args:
+        image: Perspective-corrected card image (BGR)
+
+    Returns:
+        (left, right, top, bottom) border widths, or None if detection failed.
+    """
+    h, w = image.shape[:2]
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    hue = hsv[:, :, 0].astype(np.float32)
+    sat = hsv[:, :, 1].astype(np.float32)
+
+    SAMPLE_STRIP = 3   # px strip at the very edge to sample border hue
+    HUE_TOL = 20       # hue units — border ends when hue deviates this much
+    SAT_MIN = 40       # ignore low-saturation (white/grey) columns/rows
+
+    def _border_width_axis(strip_hue: np.ndarray, strip_sat: np.ndarray,
+                           scan_hue: np.ndarray, scan_sat: np.ndarray,
+                           dim: int, reverse: bool = False) -> Optional[float]:
+        """Measure one border width along a single axis."""
+        # Use median hue of the sample strip, ignoring desaturated pixels
+        sat_ok = strip_sat > SAT_MIN
+        if sat_ok.sum() < 5:
+            return None
+        ref_hue = float(np.median(strip_hue[sat_ok]))
+
+        scan_range = range(SAMPLE_STRIP, min(dim // 3, 120))
+        if reverse:
+            scan_range = range(dim - 1 - SAMPLE_STRIP, max(dim - dim // 3, dim - 120), -1)
+
+        for idx in scan_range:
+            col = scan_hue[idx] if not reverse else scan_hue[idx]
+            col_sat = scan_sat[idx]
+            sat_mask = col_sat > SAT_MIN
+            if sat_mask.sum() < 3:
+                # Mostly desaturated column/row — likely transitioned into artwork
+                width = (idx if not reverse else dim - 1 - idx)
+                return float(width)
+            col_hue = col[sat_mask]
+            # Circular hue distance
+            diff = np.abs(col_hue.astype(float) - ref_hue)
+            diff = np.minimum(diff, 180 - diff)
+            if np.median(diff) > HUE_TOL:
+                width = (idx if not reverse else dim - 1 - idx)
+                return float(width)
+        return None
+
+    # Left border: sample leftmost strip, scan right
+    left_strip_hue = hue[:, :SAMPLE_STRIP].flatten()
+    left_strip_sat = sat[:, :SAMPLE_STRIP].flatten()
+    left = _border_width_axis(left_strip_hue, left_strip_sat, hue.T, sat.T, w, reverse=False)
+
+    # Right border: sample rightmost strip, scan left
+    right_strip_hue = hue[:, w - SAMPLE_STRIP:].flatten()
+    right_strip_sat = sat[:, w - SAMPLE_STRIP:].flatten()
+    right = _border_width_axis(right_strip_hue, right_strip_sat, hue.T, sat.T, w, reverse=True)
+
+    # Top border
+    top_strip_hue = hue[:SAMPLE_STRIP, :].flatten()
+    top_strip_sat = sat[:SAMPLE_STRIP, :].flatten()
+    top = _border_width_axis(top_strip_hue, top_strip_sat, hue, sat, h, reverse=False)
+
+    # Bottom border
+    bot_strip_hue = hue[h - SAMPLE_STRIP:, :].flatten()
+    bot_strip_sat = sat[h - SAMPLE_STRIP:, :].flatten()
+    bottom = _border_width_axis(bot_strip_hue, bot_strip_sat, hue, sat, h, reverse=True)
+
+    if any(v is None for v in (left, right, top, bottom)):
+        return None
+
+    # Ensure minimums
+    left = max(left, w * 0.02)
+    right = max(right, w * 0.02)
+    top = max(top, h * 0.02)
+    bottom = max(bottom, h * 0.02)
+
+    return left, right, top, bottom
+
+
+def detect_border_widths_gradient(image: np.ndarray) -> Tuple[float, float, float, float, bool]:
     """
     Gradient-based border detection using median-of-3 for stability.
 
@@ -143,7 +230,8 @@ def detect_border_widths_gradient(image: np.ndarray) -> Tuple[float, float, floa
         image: Perspective-corrected card image
 
     Returns:
-        Tuple of (left, right, top, bottom) border widths
+        Tuple of (left, right, top, bottom, symmetry_corrected) where
+        symmetry_corrected is True if any border was clamped by the symmetry heuristic.
     """
     h, w = image.shape[:2]
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
@@ -163,18 +251,24 @@ def detect_border_widths_gradient(image: np.ndarray) -> Tuple[float, float, floa
     # Symmetry validation: if one border is suspiciously small compared to its
     # opposite and below 5% of the dimension, clamp to 10% of dimension.
     # This prevents detection artifacts from producing extreme asymmetry.
+    # Returns whether any correction was applied so callers can reduce confidence.
     min_w = w * 0.05
     min_h = h * 0.05
+    symmetry_corrected = False
     if left_width < min_w and right_width > left_width * 3:
         left_width = max(left_width, w * 0.10)
+        symmetry_corrected = True
     if right_width < min_w and left_width > right_width * 3:
         right_width = max(right_width, w * 0.10)
+        symmetry_corrected = True
     if top_width < min_h and bottom_width > top_width * 3:
         top_width = max(top_width, h * 0.10)
+        symmetry_corrected = True
     if bottom_width < min_h and top_width > bottom_width * 3:
         bottom_width = max(bottom_width, h * 0.10)
+        symmetry_corrected = True
 
-    return left_width, right_width, top_width, bottom_width
+    return left_width, right_width, top_width, bottom_width, symmetry_corrected
 
 
 def detect_border_widths(image: np.ndarray) -> Tuple[float, float, float, float]:
@@ -278,11 +372,13 @@ def calculate_centering_score(
     
     # Dampened scoring curve — wider brackets in the mid-range (0.5-0.8)
     # to reduce sensitivity to measurement noise.
-    # Upper range (0.85+) keeps tight brackets since those measurements are reliable.
+    # Top band widened: 9.0→10.0 now spans 0.93–0.975 (was 0.95–0.975).
+    # The previous 0.025 range (~6px on a 500px card) was within natural noise;
+    # a well-centred card could randomly score 9.0 instead of 10.0.
     if avg_ratio >= 0.975:
         return 10.0
-    elif avg_ratio >= 0.95:
-        return 9.0 + (avg_ratio - 0.95) / 0.025
+    elif avg_ratio >= 0.93:
+        return 9.0 + (avg_ratio - 0.93) / 0.045
     elif avg_ratio >= 0.90:
         return 8.0 + (avg_ratio - 0.90) / 0.05
     elif avg_ratio >= 0.85:
@@ -366,34 +462,50 @@ def calculate_centering_ratios(
             logger.warning(f"Artwork box centering looks unreliable (lr={lr_ratio:.2f}, tb={tb_ratio:.2f}), trying gradient method")
             artwork_box = None  # Fall through to gradient method
     
+    symmetry_corrected = False
     if artwork_box is None:
-        # Method 2: gradient-based border detection (most reliable)
-        detection_method = "gradient_detection"
-        left, right, top, bottom = detect_border_widths_gradient(corrected)
-        
-        # Validate gradient result
-        lr_ratio = min(left, right) / max(left, right) if max(left, right) > 0 else 1.0
-        tb_ratio = min(top, bottom) / max(top, bottom) if max(top, bottom) > 0 else 1.0
-        
-        if lr_ratio < 0.3 or tb_ratio < 0.3:
-            # Still unreliable, try saturation fallback
-            logger.warning(f"Gradient centering looks unreliable (lr={lr_ratio:.2f}, tb={tb_ratio:.2f}), trying saturation method")
-            detection_method = "border_detection"
-            left, right, top, bottom = detect_border_widths(corrected)
-    
-    # Final validation: if ALL methods give extreme asymmetry, 
+        # Method 2: HSV outermost-colour detection — finds the true print border
+        # rather than firing on the artwork frame like gradient detection can.
+        detection_method = "hsv_border"
+        hsv_result = detect_border_widths_hsv(corrected)
+        if hsv_result is not None:
+            left, right, top, bottom = hsv_result
+            lr_ratio = min(left, right) / max(left, right) if max(left, right) > 0 else 1.0
+            tb_ratio = min(top, bottom) / max(top, bottom) if max(top, bottom) > 0 else 1.0
+            if lr_ratio < 0.3 or tb_ratio < 0.3:
+                logger.warning(f"HSV centering looks unreliable (lr={lr_ratio:.2f}, tb={tb_ratio:.2f}), falling back to gradient")
+                hsv_result = None
+
+        if hsv_result is None:
+            # Method 3: gradient-based border detection (fallback)
+            detection_method = "gradient_detection"
+            left, right, top, bottom, symmetry_corrected = detect_border_widths_gradient(corrected)
+
+            # Validate gradient result
+            lr_ratio = min(left, right) / max(left, right) if max(left, right) > 0 else 1.0
+            tb_ratio = min(top, bottom) / max(top, bottom) if max(top, bottom) > 0 else 1.0
+
+            if lr_ratio < 0.3 or tb_ratio < 0.3:
+                # Still unreliable, try saturation fallback
+                logger.warning(f"Gradient centering looks unreliable (lr={lr_ratio:.2f}, tb={tb_ratio:.2f}), trying saturation method")
+                detection_method = "border_detection"
+                left, right, top, bottom = detect_border_widths(corrected)
+                symmetry_corrected = False
+
+    # Final validation: if ALL methods give extreme asymmetry,
     # it's likely a detection issue, not actual centering
     lr_ratio = min(left, right) / max(left, right) if max(left, right) > 0 else 1.0
     tb_ratio = min(top, bottom) / max(top, bottom) if max(top, bottom) > 0 else 1.0
-    
+
     if lr_ratio < 0.3 or tb_ratio < 0.3:
         logger.warning(
             f"All centering methods gave extreme asymmetry "
             f"(L={left:.0f}, R={right:.0f}, T={top:.0f}, B={bottom:.0f}). "
-            f"Likely a detection artifact. Using moderate default."
+            f"Likely a detection artifact. Using ratio-derived conservative score."
         )
-        # Use conservative default rather than a wildly wrong score
-        score = 5.0
+        # Derive a score from the measured ratios rather than returning a fixed 5.0.
+        # This avoids artificially inflating severely off-centre cards.
+        score = max(2.0, calculate_centering_score(left, right, top, bottom))
         detection_method = f"{detection_method}_fallback"
     else:
         # Calculate score normally
@@ -448,12 +560,19 @@ def calculate_centering_ratios(
     # Determine confidence based on detection method
     if detection_method == "artwork_box":
         confidence = 0.9
+    elif detection_method == "hsv_border":
+        confidence = 0.85
     elif detection_method == "gradient_detection":
         confidence = 0.8
     elif "fallback" in detection_method:
         confidence = 0.5
     else:
         confidence = 0.7
+
+    # Symmetry correction overwrites a measurement with a heuristic default.
+    # Signal that the result is less reliable so it doesn't present at full confidence.
+    if symmetry_corrected:
+        confidence = min(confidence, 0.6)
     
     return {
         "success": True,

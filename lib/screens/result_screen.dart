@@ -201,11 +201,11 @@ class ResultScreen extends StatelessWidget {
               "Raw Score: ${finalScore.toStringAsFixed(1)} / 10",
               style: const TextStyle(color: Colors.white54),
             ),
-            if (gradeRange != null) ...[
+            if (gradeRange != null && gradeRange.contains('-')) ...[
               const SizedBox(height: 4),
               Text(
-                "Expected PSA range: $gradeRange",
-                style: const TextStyle(color: Colors.white38, fontSize: 12),
+                "Near grade boundary — possible PSA $gradeRange",
+                style: const TextStyle(color: Colors.orange, fontSize: 12),
               ),
             ],
             const SizedBox(height: 5),
