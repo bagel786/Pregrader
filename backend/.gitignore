@@ -24,5 +24,8 @@ Thumbs.db
 temp_uploads/*
 !temp_uploads/.gitkeep
 
+# Server logs
+server.log
+
 # Database (if local)
 *.db

@@ -13,7 +13,6 @@ sys.path.append(os.path.join(os.path.dirname(__file__), "."))
 # Mock modules that might rely on external services or files
 sys.modules["cv2"] = MagicMock()
 sys.modules["cv2"].imread.return_value = np.zeros((100, 100, 3), dtype=np.uint8)
-sys.modules["services.pokemon_tcg"] = MagicMock()
 
 # Import the modules to test
 from api.hybrid_detect import detect_and_correct_card, DetectionConfig

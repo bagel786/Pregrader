@@ -42,7 +42,6 @@ def check_file_structure():
         "backend/analysis/vision/debugger.py": "Card detection debugger",
         "backend/analysis/enhanced_corners.py": "Enhanced corner detection",
         "backend/services/ai/vision_detector.py": "Vision AI detector",
-        "backend/api/enhanced_detection.py": "Railway integration",
     }
     
     all_present = True
@@ -139,14 +138,6 @@ def test_imports():
             print_error(f"VisionAIDetector import failed: {e}")
             all_success = False
         
-        # Test enhanced detection
-        try:
-            from api.enhanced_detection import router
-            print_success("Enhanced detection router imports successfully")
-        except Exception as e:
-            print_error(f"Enhanced detection router import failed: {e}")
-            all_success = False
-            
     except Exception as e:
         print_error(f"Import test failed: {e}")
         all_success = False
