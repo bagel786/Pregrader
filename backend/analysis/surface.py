@@ -42,6 +42,55 @@ def detect_holographic_regions(image: np.ndarray) -> np.ndarray:
     return holo_mask
 
 
+def _detect_border_staining(card_roi: np.ndarray, border_mask: np.ndarray) -> float:
+    """
+    Detect localised colour anomalies in the card border region that indicate staining.
+
+    Uses the border's own LAB a* (green-red) and b* (blue-yellow) distribution as
+    the baseline rather than comparing border-to-interior.  This avoids false positives
+    on warm-toned or gold borders where the entire border is shifted — only pixels
+    that deviate significantly from the *border median* are flagged.
+
+    Args:
+        card_roi: BGR image of the card area
+        border_mask: Binary mask isolating the border ring
+
+    Returns:
+        stain_pct: Percentage of border pixels classified as stained (0–100)
+    """
+    if cv2.countNonZero(border_mask) == 0:
+        return 0.0
+
+    lab = cv2.cvtColor(card_roi, cv2.COLOR_BGR2LAB)
+    # Shift LAB a*/b* from 0-255 range to -128 to +127
+    a_ch = lab[:, :, 1].astype(np.float32) - 128.0
+    b_ch = lab[:, :, 2].astype(np.float32) - 128.0
+
+    border_a = a_ch[border_mask > 0]
+    border_b = b_ch[border_mask > 0]
+
+    if len(border_a) == 0:
+        return 0.0
+
+    a_median = np.median(border_a)
+    b_median = np.median(border_b)
+    a_std = np.std(border_a)
+    b_std = np.std(border_b)
+
+    # Avoid division by zero on perfectly uniform borders; a floor of 2.0 LAB units
+    # prevents extremely tight std from flagging normal JPEG noise as staining.
+    a_std = max(a_std, 2.0)
+    b_std = max(b_std, 2.0)
+
+    # Flag pixels that deviate more than 2.5 standard deviations from the border median
+    stained_a = int(np.sum(border_a > a_median + 2.5 * a_std))
+    stained_b = int(np.sum(border_b > b_median + 2.5 * b_std))
+
+    # Normalise over both channels to get a combined stain percentage
+    stain_pct = (stained_a + stained_b) / (2.0 * len(border_a)) * 100.0
+    return float(stain_pct)
+
+
 def analyze_surface_damage(image_path: str, is_front: bool = True) -> dict:
     """
     Analyzes a Pokemon card image for surface damage including scratches and marks.
@@ -164,7 +213,31 @@ def analyze_surface_damage(image_path: str, is_front: bool = True) -> dict:
         # Apply major damage penalty (creases, dents, stains)
         if major_damage_detected:
             score = min(score, 3.0)  # Creases/dents cap at 3
-        
+
+        # Border stain detection — build a thin ring mask (3% of smaller dimension)
+        # and check for localised colour anomalies in the LAB a*/b* channels.
+        stain_pct = 0.0
+        stain_detected = False
+        try:
+            border_px = max(10, int(min(card_roi.shape[:2]) * 0.03))
+            border_kernel = cv2.getStructuringElement(
+                cv2.MORPH_RECT, (border_px, border_px)
+            )
+            full_mask_s = np.ones(card_roi.shape[:2], dtype=np.uint8) * 255
+            inner_mask_s = cv2.erode(full_mask_s, border_kernel, iterations=1)
+            border_ring = cv2.subtract(full_mask_s, inner_mask_s)
+            # Exclude glare/holo from stain analysis
+            border_ring = cv2.bitwise_and(border_ring, cv2.bitwise_not(exclusion_mask))
+            stain_pct = _detect_border_staining(card_roi, border_ring)
+            stain_detected = stain_pct > 1.0
+            # Cap score for visible staining
+            if stain_pct > 15.0:
+                score = min(score, 6.0)
+            elif stain_pct > 5.0:
+                score = min(score, 8.0)
+        except Exception:
+            pass  # Stain detection failure is non-fatal
+
         # Calculate confidence based on excluded regions
         glare_pixels = cv2.countNonZero(glare_mask)
         glare_percentage = (glare_pixels / total_card_area) * 100 if total_card_area > 0 else 0
@@ -197,6 +270,8 @@ def analyze_surface_damage(image_path: str, is_front: bool = True) -> dict:
                 "scratch_count": scratch_count,
                 "scratch_area_pct": round(total_scratch_area_pct, 3),
                 "major_damage_detected": major_damage_detected,
+                "stain_pct": round(stain_pct, 2),
+                "stain_detected": stain_detected,
                 "confidence": confidence,
                 "glare_percentage": round(glare_percentage, 1),
                 "holo_percentage": round(holo_percentage, 1),

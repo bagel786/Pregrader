@@ -143,6 +143,33 @@ def _detect_whitening_adaptive(roi_bgr: np.ndarray) -> float:
     return whitening_pct
 
 
+def _roundness_penalty_from_coverage(mask_coverage: float) -> float:
+    """
+    Convert ROI mask coverage to a corner score deduction for geometric rounding.
+
+    The ROI starts at the detected card corner and extends inward.  A sharp corner
+    fills the entire ROI with card pixels (coverage ≈ 1.0).  A rounded corner
+    curves the boundary inward, leaving background pixels near the tip → lower
+    coverage.  The returned penalty is subtracted from the whitening-based score.
+
+    Args:
+        mask_coverage: Fraction of ROI pixels inside the card (0–1)
+
+    Returns:
+        Score deduction (0.0 = sharp, up to 2.0 = severely rounded)
+    """
+    if mask_coverage >= 0.90:
+        return 0.0    # sharp — no penalty
+    elif mask_coverage >= 0.80:
+        return 0.5    # slight rounding
+    elif mask_coverage >= 0.65:
+        return 1.0    # moderate rounding
+    elif mask_coverage >= 0.50:
+        return 1.5    # significant rounding
+    else:
+        return 2.0    # severe rounding
+
+
 def analyze_corner_wear(image_path: str) -> dict:
     """
     Analyzes the 4 corners of a Pokemon card for whitening/wear.
@@ -237,14 +264,44 @@ def analyze_corner_wear(image_path: str) -> dict:
                 # Less than half the ROI is card - reduce confidence but keep the score
                 whitening_pct = whitening_pct * mask_coverage  # Scale down false positives
             
-            score = _calculate_corner_score_smooth(whitening_pct)
-            
+            whitening_score = _calculate_corner_score_smooth(whitening_pct)
+            score = whitening_score  # roundness penalty applied below after all corners scored
+
             results[name] = {
                 "score": score,
                 "whitening_pct": round(whitening_pct, 2),
                 "mask_coverage": round(mask_coverage, 2),
             }
             
+        # Roundness penalty pass — applied after all corners are scored.
+        # Requires coverage info from non-fallback corners only.
+        # Guard: single corner below 0.90 only penalised if coverage < 0.75
+        # (stricter threshold guards against single detection-jitter false positives).
+        # Two or more corners below 0.90 apply the standard penalty table.
+        coverage_values = [
+            (name, c["mask_coverage"])
+            for name, c in results.items()
+            if not c.get("fallback") and "mask_coverage" in c
+        ]
+        low_coverage_corners = [name for name, cov in coverage_values if cov < 0.90]
+        multi_corner_rounding = len(low_coverage_corners) >= 2
+
+        for name, cov in coverage_values:
+            if name not in results or results[name].get("fallback"):
+                continue
+            apply_penalty = False
+            if multi_corner_rounding and cov < 0.90:
+                apply_penalty = True
+            elif not multi_corner_rounding and cov < 0.75:
+                apply_penalty = True  # single corner — stricter threshold
+
+            if apply_penalty:
+                penalty = _roundness_penalty_from_coverage(cov)
+                if penalty > 0:
+                    old_score = results[name]["score"]
+                    results[name]["score"] = max(1.0, round(old_score - penalty, 1))
+                    results[name]["roundness_penalty"] = round(penalty, 1)
+
         # Calculate overall corner grade and confidence
         corner_scores = [c["score"] for c in results.values()]
         overall_grade = calculate_corner_grade(corner_scores)

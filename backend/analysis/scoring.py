@@ -38,17 +38,37 @@ class GradingEngine:
         (3.0, "3"),    # Same - very poor
         (2.0, "2"),    # Same - damaged
         (1.0, "1"),    # Same - heavily damaged
-        (0.0, "0")     # Ungrade able
+        (0.0, "0")     # Ungradeable
+    ]
+
+    # PSA centering tolerance table: min/max ratio → max allowed PSA grade.
+    # Ratio = min(left,right) / max(left,right).  E.g. 55/45 → 45/55 = 0.818.
+    # Both LR and TB axes must pass; the cap uses the worst (smaller) ratio.
+    PSA_CENTERING_CAPS = [
+        (0.818, 10),   # 55/45
+        (0.667, 9),    # 60/40
+        (0.538, 8),    # 65/35
+        (0.429, 7),    # 70/30
+        (0.250, 6),    # 80/20
+        (0.176, 5),    # 85/15
+        (0.111, 4),    # 90/10
+        (0.0,   3),    # worse than 90/10
     ]
     
     @staticmethod
-    def _calculate_grade_range(final_score: float, grade_label: str) -> str:
+    def _calculate_grade_range(
+        final_score: float,
+        grade_label: str,
+        centering_score: Optional[float] = None,
+    ) -> str:
         """
         Return a grade range string when the score is near a PSA grade boundary.
 
         A score within 0.3 of a boundary (e.g. 9.3 near the 9.5 threshold)
         indicates measurement uncertainty; the true grade could be one step higher.
-        This is most important near the PSA 9/10 boundary where value diverges sharply.
+        PSA's half-grade criteria give "clear focus" to centering, so an upward
+        range is only shown when centering is at least as strong as the composite
+        score (centering is a strength, not the weakest link).
         """
         BOUNDARY_MARGIN = 0.3
         brackets = GradingEngine.GRADE_BRACKETS
@@ -62,7 +82,9 @@ class GradingEngine:
         if current_idx is not None and current_idx > 0:
             upper_threshold, upper_label = brackets[current_idx - 1]
             if final_score >= upper_threshold - BOUNDARY_MARGIN:
-                return f"{grade_label}-{upper_label}"
+                # Centering must be at or above the composite for the upward range
+                if centering_score is None or centering_score >= final_score:
+                    return f"{grade_label}-{upper_label}"
 
         return grade_label
 
@@ -136,6 +158,8 @@ class GradingEngine:
         surface_data: Dict[str, Any],
         centering_confidence: float = 0.5,
         quality_assessment: Optional[Dict[str, str]] = None,
+        centering_lr_ratio: Optional[float] = None,
+        centering_tb_ratio: Optional[float] = None,
     ) -> Dict[str, Any]:
         """
         Calculates the final grade with proper calibration and confidence tracking.
@@ -198,24 +222,47 @@ class GradingEngine:
         # Apply penalty
         final_score = weighted_score - damage_penalty
 
-        # Floor: final score cannot be more than 0.5 below the worst individual corner.
-        # Corner scores already encode whitening damage; this prevents other components
-        # from dragging the grade below what the worst corner warrants.
-        final_score = max(final_score, min_corner - 0.5)
+        # Floor + ceiling: anchor the grade around the weakest component.
+        # Floor prevents over-penalisation from the weighted average dragging
+        # the score below what individual components warrant.
+        # Ceiling prevents strong components from lifting the grade more than
+        # 1.0 point above the weakest component (PSA anchors on worst damage).
+        # Centering is included only when detection confidence is reliable.
+        floor_components = [result.corners_score, result.edges_score, result.surface_score]
+        if result.centering_confidence >= 0.6:
+            floor_components.append(result.centering_score)
+        worst_component = min(floor_components)
+        final_score = max(final_score, worst_component - 0.5)   # floor
+        final_score = min(final_score, worst_component + 1.0)   # ceiling
 
-        # NO 1.25x BOOST - properly calibrated thresholds
+        # Clamp to valid range
         final_score = max(min(final_score, 10.0), 1.0)
         final_score = round(final_score, 1)
-        
+
         result.final_score = final_score
-        
+
         # 4. Map to Grade Label
         grade_label = "0"
         for threshold, label in GradingEngine.GRADE_BRACKETS:
             if final_score >= threshold:
                 grade_label = label
                 break
-        
+
+        # 4a. Apply PSA centering cap — centering imposes a hard ceiling on the
+        # PSA label regardless of how strong other components are.
+        centering_cap_applied = False
+        if centering_lr_ratio is not None and centering_tb_ratio is not None:
+            worst_centering_ratio = min(centering_lr_ratio, centering_tb_ratio)
+            centering_cap = next(
+                (cap for ratio, cap in GradingEngine.PSA_CENTERING_CAPS
+                 if worst_centering_ratio >= ratio),
+                3  # fallback if no threshold matched
+            )
+            current_grade_num = int(grade_label) if grade_label.isdigit() else 0
+            if current_grade_num > centering_cap:
+                grade_label = str(centering_cap)
+                centering_cap_applied = True
+
         result.psa_estimate = grade_label
         
         # 4b. Apply Claude Vision quality signal multipliers to per-component confidence.
@@ -282,6 +329,10 @@ class GradingEngine:
 
         # 7. Generate explanations and recommendations
         result.explanations = GradingEngine.generate_explanations(result)
+        if centering_cap_applied:
+            result.explanations.append(
+                f"✗ Centering cap applied — PSA grade limited to {grade_label} by centering tolerance"
+            )
         result.recommendations = GradingEngine.generate_recommendations(result)
 
         return {
@@ -305,5 +356,8 @@ class GradingEngine:
             "grading_status_message": grading_status_message,
             "explanations": result.explanations,
             "recommendations": result.recommendations,
-            "grade_range": GradingEngine._calculate_grade_range(final_score, grade_label)
+            "grade_range": GradingEngine._calculate_grade_range(
+                final_score, grade_label, centering_score=result.centering_score
+            ),
+            "centering_cap_applied": centering_cap_applied,
         }

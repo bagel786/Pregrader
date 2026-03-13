@@ -181,9 +181,11 @@ def combine_front_back_analysis(
     front_edge_score = front_edges.get("score", front_edges.get("grade_estimate", 10.0))
     back_edge_score = back_edges.get("score", back_edges.get("grade_estimate", 10.0))
     
-    worse_edge = min(front_edge_score, back_edge_score)
-    better_edge = max(front_edge_score, back_edge_score)
-    blended_edge_score = round(worse_edge * 0.60 + better_edge * 0.40, 1)
+    # Front-aware blend: front edges matter more to PSA graders than back edges.
+    if front_edge_score <= back_edge_score:   # front is worse
+        blended_edge_score = round(front_edge_score * 0.65 + back_edge_score * 0.35, 1)
+    else:                                      # back is worse (more forgiving)
+        blended_edge_score = round(back_edge_score * 0.55 + front_edge_score * 0.45, 1)
     
     if back_edge_score < front_edge_score:
         combined["edges"] = back_edges.copy()
@@ -205,9 +207,11 @@ def combine_front_back_analysis(
     front_surface_score = front_surface.get("score", 10.0)
     back_surface_score = back_surface.get("score", 10.0)
 
-    worse_surface_score = min(front_surface_score, back_surface_score)
-    better_surface_score = max(front_surface_score, back_surface_score)
-    blended_surface_score = round(worse_surface_score * 0.65 + better_surface_score * 0.35, 1)
+    # Front-aware blend: PSA tolerates minor back surface blemishes more than front ones.
+    if front_surface_score <= back_surface_score:   # front is worse
+        blended_surface_score = round(front_surface_score * 0.70 + back_surface_score * 0.30, 1)
+    else:                                             # back is worse (more forgiving)
+        blended_surface_score = round(back_surface_score * 0.60 + front_surface_score * 0.40, 1)
 
     # Use the worse side's metadata (scratch_count, major_damage_detected, etc.)
     # but override the score with the blended value.
@@ -228,13 +232,16 @@ def combine_front_back_analysis(
     try:
         # Propagate Claude Vision quality signals from front detection if available
         quality_assessment = front_analysis.get("detection", {}).get("quality_assessment")
+        centering_data = combined["centering"] or {}
         grading_result = GradingEngine.calculate_grade(
-            centering_score=combined["centering"].get("grade_estimate", 5.0),
+            centering_score=centering_data.get("grade_estimate", 5.0),
             corners_data=combined["corners"],
             edges_data=combined["edges"],
             surface_data=combined["surface"].get("surface", {"score": 5.0}),
-            centering_confidence=combined["centering"].get("confidence", 0.5),
+            centering_confidence=centering_data.get("confidence", 0.5),
             quality_assessment=quality_assessment,
+            centering_lr_ratio=centering_data.get("lr_ratio"),
+            centering_tb_ratio=centering_data.get("tb_ratio"),
         )
         combined["grade"] = grading_result
     except Exception as e:
@@ -281,16 +288,18 @@ def grade_card_session(
         }
         
         # Calculate grade
-        centering = combined["centering"]
+        centering = combined["centering"] or {}
         try:
             quality_assessment = front_analysis.get("detection", {}).get("quality_assessment")
             grading_result = GradingEngine.calculate_grade(
-                centering_score=centering.get("grade_estimate", 5.0) if centering else 5.0,
+                centering_score=centering.get("grade_estimate", 5.0),
                 corners_data=combined["corners"] if combined["corners"] else {"corners": {}, "overall_grade": 5.0},
                 edges_data=combined["edges"] if combined["edges"] else {"score": 5.0},
                 surface_data=combined["surface"].get("surface", {"score": 5.0}) if combined["surface"] else {"score": 5.0},
-                centering_confidence=centering.get("confidence", 0.5) if centering else 0.3,
+                centering_confidence=centering.get("confidence", 0.3),
                 quality_assessment=quality_assessment,
+                centering_lr_ratio=centering.get("lr_ratio"),
+                centering_tb_ratio=centering.get("tb_ratio"),
             )
             combined["grade"] = grading_result
         except Exception as e:

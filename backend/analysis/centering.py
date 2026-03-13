@@ -579,6 +579,8 @@ def calculate_centering_ratios(
         "score": round(score, 1),
         "grade_estimate": round(score, 1),  # Backward compatibility
         "detection_method": detection_method,
+        "lr_ratio": round(lr_ratio, 4),
+        "tb_ratio": round(tb_ratio, 4),
         "measurements": {
             "left_px": left,
             "right_px": right,
