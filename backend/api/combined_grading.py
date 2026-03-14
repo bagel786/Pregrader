@@ -17,7 +17,8 @@ from analysis.scoring import GradingEngine
 def analyze_single_side(
     image_path: str,
     side: str = "front",
-    debug_output_dir: Optional[Path] = None
+    debug_output_dir: Optional[Path] = None,
+    detection_data: Optional[Dict] = None,
 ) -> Dict:
     """
     Run full analysis on a single card side.
@@ -60,7 +61,12 @@ def analyze_single_side(
             centering_path = None
             if debug_output_dir:
                 centering_path = str(debug_output_dir / f"{side}_centering.jpg")
-            results["centering"] = calculate_centering_ratios(image_path, debug_output_path=centering_path)
+            vision_border_fractions = detection_data.get("border_fractions") if detection_data else None
+            results["centering"] = calculate_centering_ratios(
+                image_path,
+                debug_output_path=centering_path,
+                vision_border_fractions=vision_border_fractions,
+            )
         except Exception as e:
             results["errors"].append(f"Centering failed: {str(e)}")
             results["centering"] = {"error": str(e), "grade_estimate": 5.0, "confidence": 0.3}
@@ -233,15 +239,21 @@ def combine_front_back_analysis(
         # Propagate Claude Vision quality signals from front detection if available
         quality_assessment = front_analysis.get("detection", {}).get("quality_assessment")
         centering_data = combined["centering"] or {}
+        centering_conf = centering_data.get("confidence", 0.5)
         grading_result = GradingEngine.calculate_grade(
             centering_score=centering_data.get("grade_estimate", 5.0),
             corners_data=combined["corners"],
             edges_data=combined["edges"],
             surface_data=combined["surface"].get("surface", {"score": 5.0}),
-            centering_confidence=centering_data.get("confidence", 0.5),
+            centering_confidence=centering_conf,
             quality_assessment=quality_assessment,
-            centering_lr_ratio=centering_data.get("lr_ratio"),
-            centering_tb_ratio=centering_data.get("tb_ratio"),
+            # Only apply PSA centering cap when detection is reliable enough.
+            # Unreliable measurements (cross-axis mismatch, low confidence) are
+            # already excluded from floor/ceiling via centering_confidence < 0.6;
+            # also exclude them from the hard cap so a bad gradient reading
+            # doesn't lower an otherwise well-graded card.
+            centering_lr_ratio=centering_data.get("lr_ratio") if centering_conf >= 0.6 else None,
+            centering_tb_ratio=centering_data.get("tb_ratio") if centering_conf >= 0.6 else None,
         )
         combined["grade"] = grading_result
     except Exception as e:
@@ -291,15 +303,16 @@ def grade_card_session(
         centering = combined["centering"] or {}
         try:
             quality_assessment = front_analysis.get("detection", {}).get("quality_assessment")
+            centering_conf = centering.get("confidence", 0.3)
             grading_result = GradingEngine.calculate_grade(
                 centering_score=centering.get("grade_estimate", 5.0),
                 corners_data=combined["corners"] if combined["corners"] else {"corners": {}, "overall_grade": 5.0},
                 edges_data=combined["edges"] if combined["edges"] else {"score": 5.0},
                 surface_data=combined["surface"].get("surface", {"score": 5.0}) if combined["surface"] else {"score": 5.0},
-                centering_confidence=centering.get("confidence", 0.3),
+                centering_confidence=centering_conf,
                 quality_assessment=quality_assessment,
-                centering_lr_ratio=centering.get("lr_ratio"),
-                centering_tb_ratio=centering.get("tb_ratio"),
+                centering_lr_ratio=centering.get("lr_ratio") if centering_conf >= 0.6 else None,
+                centering_tb_ratio=centering.get("tb_ratio") if centering_conf >= 0.6 else None,
             )
             combined["grade"] = grading_result
         except Exception as e:

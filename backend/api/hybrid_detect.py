@@ -120,6 +120,7 @@ async def detect_and_correct_card(
             "method": "hybrid_ai",
             "confidence": ai_result["confidence"],
             "quality_assessment": ai_result.get("quality_assessment"),
+            "border_fractions": ai_result.get("border_fractions"),
             "recommendations": [],
             "detection_log": log,
         }
@@ -318,9 +319,10 @@ async def _try_ai_fallback(image_path: str, session_id: str) -> Dict:
                     "corrected_image": corrected,
                     "confidence": ai_result["confidence"],
                     "quality_assessment": ai_result.get("llm_result", {}).get("quality_assessment"),
+                    "border_fractions": ai_result.get("border_fractions"),
                 }
 
-        return {"success": False, "confidence": ai_result.get("confidence", 0)}
+        return {"success": False, "confidence": ai_result.get("confidence", 0), "border_fractions": None}
 
     except Exception as e:
         logger.error(f"[{session_id}] AI detection failed: {e}")

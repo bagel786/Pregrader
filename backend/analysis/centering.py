@@ -155,9 +155,15 @@ def detect_border_widths_hsv(image: np.ndarray) -> Optional[Tuple[float, float, 
     SAMPLE_STRIP = 3   # px strip at the very edge to sample border hue
     HUE_TOL = 20       # hue units — border ends when hue deviates this much
     SAT_MIN = 40       # ignore low-saturation (white/grey) columns/rows
+    VAL_STD_THRESHOLD = 28  # brightness std dev above this = artwork texture detected
+                            # catches warm-colored cards where hue doesn't change
+                            # (e.g. orange Rapidash border vs orange flame artwork)
+
+    val = hsv[:, :, 2].astype(np.float32)
 
     def _border_width_axis(strip_hue: np.ndarray, strip_sat: np.ndarray,
                            scan_hue: np.ndarray, scan_sat: np.ndarray,
+                           scan_val: np.ndarray,
                            dim: int, reverse: bool = False) -> Optional[float]:
         """Measure one border width along a single axis."""
         # Use median hue of the sample strip, ignoring desaturated pixels
@@ -171,14 +177,23 @@ def detect_border_widths_hsv(image: np.ndarray) -> Optional[Tuple[float, float, 
             scan_range = range(dim - 1 - SAMPLE_STRIP, max(dim - dim // 3, dim - 120), -1)
 
         for idx in scan_range:
-            col = scan_hue[idx] if not reverse else scan_hue[idx]
             col_sat = scan_sat[idx]
+            col_val = scan_val[idx]
             sat_mask = col_sat > SAT_MIN
             if sat_mask.sum() < 3:
                 # Mostly desaturated column/row — likely transitioned into artwork
                 width = (idx if not reverse else dim - 1 - idx)
                 return float(width)
-            col_hue = col[sat_mask]
+
+            # Brightness variance check: the printed border is a flat uniform colour;
+            # artwork has high local brightness variation even when the hue is similar.
+            # This catches warm-bordered cards (orange/yellow) where hue alone can't
+            # distinguish the border from same-hued artwork.
+            if np.std(col_val[sat_mask]) > VAL_STD_THRESHOLD:
+                width = (idx if not reverse else dim - 1 - idx)
+                return float(width)
+
+            col_hue = scan_hue[idx][sat_mask]
             # Circular hue distance
             diff = np.abs(col_hue.astype(float) - ref_hue)
             diff = np.minimum(diff, 180 - diff)
@@ -190,22 +205,22 @@ def detect_border_widths_hsv(image: np.ndarray) -> Optional[Tuple[float, float, 
     # Left border: sample leftmost strip, scan right
     left_strip_hue = hue[:, :SAMPLE_STRIP].flatten()
     left_strip_sat = sat[:, :SAMPLE_STRIP].flatten()
-    left = _border_width_axis(left_strip_hue, left_strip_sat, hue.T, sat.T, w, reverse=False)
+    left = _border_width_axis(left_strip_hue, left_strip_sat, hue.T, sat.T, val.T, w, reverse=False)
 
     # Right border: sample rightmost strip, scan left
     right_strip_hue = hue[:, w - SAMPLE_STRIP:].flatten()
     right_strip_sat = sat[:, w - SAMPLE_STRIP:].flatten()
-    right = _border_width_axis(right_strip_hue, right_strip_sat, hue.T, sat.T, w, reverse=True)
+    right = _border_width_axis(right_strip_hue, right_strip_sat, hue.T, sat.T, val.T, w, reverse=True)
 
     # Top border
     top_strip_hue = hue[:SAMPLE_STRIP, :].flatten()
     top_strip_sat = sat[:SAMPLE_STRIP, :].flatten()
-    top = _border_width_axis(top_strip_hue, top_strip_sat, hue, sat, h, reverse=False)
+    top = _border_width_axis(top_strip_hue, top_strip_sat, hue, sat, val, h, reverse=False)
 
     # Bottom border
     bot_strip_hue = hue[h - SAMPLE_STRIP:, :].flatten()
     bot_strip_sat = sat[h - SAMPLE_STRIP:, :].flatten()
-    bottom = _border_width_axis(bot_strip_hue, bot_strip_sat, hue, sat, h, reverse=True)
+    bottom = _border_width_axis(bot_strip_hue, bot_strip_sat, hue, sat, val, h, reverse=True)
 
     if any(v is None for v in (left, right, top, bottom)):
         return None
@@ -219,7 +234,7 @@ def detect_border_widths_hsv(image: np.ndarray) -> Optional[Tuple[float, float, 
     return left, right, top, bottom
 
 
-def detect_border_widths_gradient(image: np.ndarray) -> Tuple[float, float, float, float, bool]:
+def detect_border_widths_gradient(image: np.ndarray) -> Tuple[float, float, float, float, bool, bool]:
     """
     Gradient-based border detection using median-of-3 for stability.
 
@@ -230,8 +245,10 @@ def detect_border_widths_gradient(image: np.ndarray) -> Tuple[float, float, floa
         image: Perspective-corrected card image
 
     Returns:
-        Tuple of (left, right, top, bottom, symmetry_corrected) where
-        symmetry_corrected is True if any border was clamped by the symmetry heuristic.
+        Tuple of (left, right, top, bottom, symmetry_corrected, cross_axis_unreliable).
+        symmetry_corrected: True if any border was clamped by the per-side symmetry heuristic.
+        cross_axis_unreliable: True if L/R and T/B averages differ by > 3× — strong signal
+            that gradient fired on the wrong edges (e.g. artwork frame instead of outer border).
     """
     h, w = image.shape[:2]
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
@@ -268,7 +285,18 @@ def detect_border_widths_gradient(image: np.ndarray) -> Tuple[float, float, floa
         bottom_width = max(bottom_width, h * 0.10)
         symmetry_corrected = True
 
-    return left_width, right_width, top_width, bottom_width, symmetry_corrected
+    # Cross-axis consistency check: compare average border fraction for each axis.
+    # If one axis's average border is > 3× the other's (as a fraction of card
+    # dimension), the larger axis is almost certainly measuring wrong edges — e.g.
+    # the artwork frame boundary or text-box boundary rather than the outer printed
+    # border. This is the signature of gradient misfiring on warm-colored cards
+    # (T=70 B=126 vs L=10 R=12 on a well-centred Rapidash card).
+    lr_fraction = (left_width + right_width) / (2.0 * w)
+    tb_fraction = (top_width + bottom_width) / (2.0 * h)
+    min_frac = max(min(lr_fraction, tb_fraction), 0.001)
+    cross_axis_unreliable = max(lr_fraction, tb_fraction) / min_frac > 3.0
+
+    return left_width, right_width, top_width, bottom_width, symmetry_corrected, cross_axis_unreliable
 
 
 def detect_border_widths(image: np.ndarray) -> Tuple[float, float, float, float]:
@@ -397,7 +425,8 @@ def calculate_centering_score(
 
 def calculate_centering_ratios(
     image_path: str,
-    debug_output_path: Optional[str] = None
+    debug_output_path: Optional[str] = None,
+    vision_border_fractions: Optional[Dict] = None,
 ) -> Dict:
     """
     Analyze card centering and return detailed measurements.
@@ -438,9 +467,63 @@ def calculate_centering_ratios(
     # Get corners and apply perspective correction
     corners = get_card_corners(card_contour)
     corrected = perspective_correct_card(image, corners)
-    
+
     img_height, img_width = corrected.shape[:2]
-    
+
+    # Method 0: Vision AI border fractions (highest priority when available)
+    # The Vision API already saw this card during detection and returns the border
+    # widths as fractions of card dimension — color/type agnostic and works for all cards.
+    if vision_border_fractions is not None:
+        frac_l = vision_border_fractions.get("left", 0)
+        frac_r = vision_border_fractions.get("right", 0)
+        frac_t = vision_border_fractions.get("top", 0)
+        frac_b = vision_border_fractions.get("bottom", 0)
+        # Sanity check: each fraction must be plausible (1%–30% of card dimension).
+        # Values outside this range indicate the model returned 0 (unknown) or an
+        # implausibly wide border — fall through to OpenCV methods in those cases.
+        if all(0.01 <= f <= 0.30 for f in (frac_l, frac_r, frac_t, frac_b)):
+            left   = frac_l * img_width
+            right  = frac_r * img_width
+            top    = frac_t * img_height
+            bottom = frac_b * img_height
+            lr_ratio = min(left, right) / max(left, right) if max(left, right) > 0 else 1.0
+            tb_ratio = min(top, bottom) / max(top, bottom) if max(top, bottom) > 0 else 1.0
+            score = calculate_centering_score(left, right, top, bottom)
+            total_lr = left + right
+            total_tb = top + bottom
+            left_pct   = (left   / total_lr * 100) if total_lr > 0 else 50.0
+            right_pct  = (right  / total_lr * 100) if total_lr > 0 else 50.0
+            top_pct    = (top    / total_tb * 100) if total_tb > 0 else 50.0
+            bottom_pct = (bottom / total_tb * 100) if total_tb > 0 else 50.0
+            logger.info(
+                f"Centering via vision_ai: "
+                f"L={left:.0f} R={right:.0f} T={top:.0f} B={bottom:.0f} "
+                f"lr_ratio={lr_ratio:.3f} tb_ratio={tb_ratio:.3f} score={score:.1f}"
+            )
+            return {
+                "success": True,
+                "score": round(score, 1),
+                "grade_estimate": round(score, 1),
+                "detection_method": "vision_ai",
+                "lr_ratio": round(lr_ratio, 4),
+                "tb_ratio": round(tb_ratio, 4),
+                "measurements": {
+                    "left_px": left,
+                    "right_px": right,
+                    "top_px": top,
+                    "bottom_px": bottom,
+                    "left_right_ratio": f"{left_pct:.1f}/{right_pct:.1f}",
+                    "top_bottom_ratio": f"{top_pct:.1f}/{bottom_pct:.1f}",
+                },
+                "confidence": 0.90,
+            }
+        else:
+            logger.warning(
+                f"Vision border_fractions failed sanity check "
+                f"(L={frac_l}, R={frac_r}, T={frac_t}, B={frac_b}), "
+                f"falling through to OpenCV methods"
+            )
+
     # Method 1: Detect inner artwork box
     artwork_box = detect_inner_artwork_box(corrected)
     detection_method = "artwork_box"
@@ -463,6 +546,7 @@ def calculate_centering_ratios(
             artwork_box = None  # Fall through to gradient method
     
     symmetry_corrected = False
+    cross_axis_unreliable = False
     if artwork_box is None:
         # Method 2: HSV outermost-colour detection — finds the true print border
         # rather than firing on the artwork frame like gradient detection can.
@@ -479,7 +563,7 @@ def calculate_centering_ratios(
         if hsv_result is None:
             # Method 3: gradient-based border detection (fallback)
             detection_method = "gradient_detection"
-            left, right, top, bottom, symmetry_corrected = detect_border_widths_gradient(corrected)
+            left, right, top, bottom, symmetry_corrected, cross_axis_unreliable = detect_border_widths_gradient(corrected)
 
             # Validate gradient result
             lr_ratio = min(left, right) / max(left, right) if max(left, right) > 0 else 1.0
@@ -569,9 +653,14 @@ def calculate_centering_ratios(
     else:
         confidence = 0.7
 
-    # Symmetry correction overwrites a measurement with a heuristic default.
-    # Signal that the result is less reliable so it doesn't present at full confidence.
-    if symmetry_corrected:
+    # Reliability signals: reduce confidence so callers know not to trust the measurement.
+    # cross_axis_unreliable: gradient fired on the wrong edges (artwork frame instead of
+    # outer printed border). Cap to 0.5 so centering is excluded from floor/ceiling and
+    # PSA cap (both require confidence >= 0.6).
+    # symmetry_corrected (per-side only): one border was clamped; still somewhat usable.
+    if cross_axis_unreliable:
+        confidence = min(confidence, 0.5)
+    elif symmetry_corrected:
         confidence = min(confidence, 0.6)
     
     return {

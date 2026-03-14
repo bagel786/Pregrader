@@ -327,11 +327,9 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen> {
 
       // Run Vision on the baked image
       Rect? cardRect;
-      double cropConfidence = 0.0;
       final visionResult = await CardDetectorService.detectRectangle(bakedPath);
       if (visionResult != null && visionResult.confidence > 0.25) {
         cardRect = visionResult.boundingBox;
-        cropConfidence = visionResult.confidence;
         debugPrint('[CropDebug] Using Vision-on-still (confidence=${visionResult.confidence.toStringAsFixed(2)})');
       }
 
@@ -341,7 +339,6 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen> {
       final bool usesCoverMapping = cardRect == null;
       if (cardRect == null && _detectedCard != null) {
         cardRect = _detectedCard;
-        cropConfidence = 0.35;
         debugPrint('[CropDebug] Using live-stream rect fallback');
       }
 
@@ -354,7 +351,6 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen> {
           guideRect.right / screenWidth,
           guideRect.bottom / screenHeight,
         );
-        cropConfidence = 0.0;
         debugPrint('[CropDebug] Using static guide rect fallback');
       }
 
@@ -397,10 +393,9 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen> {
         cropH = (cardRect.height * visibleH).round();
       }
 
-      // Confidence-aware padding: high confidence → tight crop, low → generous fallback
-      final padFactor = cropConfidence > 0.7 ? 0.01 : cropConfidence > 0.4 ? 0.03 : 0.05;
-      final padX = (cropW * padFactor).round();
-      final padY = (cropH * padFactor).round();
+      // Add 2% padding
+      final padX = (cropW * 0.02).round();
+      final padY = (cropH * 0.02).round();
 
       final finalX = (cropX - padX).clamp(0, imageWidth - 1);
       final finalY = (cropY - padY).clamp(0, imageHeight - 1);

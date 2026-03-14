@@ -82,6 +82,14 @@ Your task:
 2. If yes, identify the 4 corner points of the card (top-left, top-right, bottom-right, bottom-left)
 3. Assess image quality (lighting, blur, angle)
 4. Provide confidence score
+5. Measure the printed colored border of the Pokemon card on each side.
+   The border is the uniform flat-colored frame between the physical card edge and
+   the artwork/content area (name bar, illustration box, text box).
+   Express each as a fraction of the card's own dimension (not the image dimension):
+   - left: fraction of card width  (e.g. 0.07 = border is 7% of card width)
+   - right: fraction of card width
+   - top: fraction of card height
+   - bottom: fraction of card height
 
 Respond in JSON format:
 {
@@ -95,6 +103,12 @@ Respond in JSON format:
         "blur": "sharp/slight/heavy",
         "angle": "straight/slight/heavy",
         "background": "plain/busy/unclear"
+    },
+    "border_fractions": {
+        "left": 0.07,
+        "right": 0.07,
+        "top": 0.08,
+        "bottom": 0.07
     }
 }
 
@@ -104,6 +118,8 @@ Important:
 - Confidence should reflect how certain you are
 - If card is rotated/angled, still provide corners
 - If multiple cards, choose the most prominent one
+- border_fractions are relative to the card dimensions, not the full image
+- Typical Pokemon card border is 5-10% per side; full-art cards may have no distinct border
 """
         
         # Call Claude API
@@ -201,27 +217,33 @@ Important:
                 "llm_result": llm_result,
                 "final_corners": None,
                 "confidence": 0.0,
-                "method": "failed"
+                "method": "failed",
+                "border_fractions": None,
             }
-        
+
+        # Extract border_fractions if the model returned them
+        border_fractions = llm_result.get("border_fractions")
+
         ai_corners = np.array(llm_result["corners"], dtype=np.float32)
-        
+
         # Step 2: Refine with OpenCV
         refined_corners = self._refine_corners_with_opencv(image_path, ai_corners)
-        
+
         if refined_corners is not None:
             return {
                 "llm_result": llm_result,
                 "final_corners": refined_corners,
                 "confidence": min(llm_result["confidence"] * 1.1, 1.0),  # Boost confidence
-                "method": "ai_refined"
+                "method": "ai_refined",
+                "border_fractions": border_fractions,
             }
         else:
             return {
                 "llm_result": llm_result,
                 "final_corners": ai_corners,
                 "confidence": llm_result["confidence"],
-                "method": "ai_only"
+                "method": "ai_only",
+                "border_fractions": border_fractions,
             }
     
     def _refine_corners_with_opencv(

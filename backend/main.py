@@ -250,8 +250,13 @@ async def upload_front_image(
             logger.info(f"[{session_id}] Detection failed, analyzing raw image")
         
         # Run analysis on the best available image
+        # Pass Vision AI border_fractions (if available) for accurate centering
         logger.info(f"[{session_id}] Starting front side analysis")
-        front_analysis = analyze_single_side(analysis_image_path, "front")
+        front_analysis = analyze_single_side(
+            analysis_image_path,
+            "front",
+            detection_data={"border_fractions": detection.get("border_fractions")},
+        )
         
         # Use enhanced corners if available and we have a corrected image
         if _enhanced_corners_available and detection["success"]:
@@ -381,7 +386,11 @@ async def upload_back_image(
         
         # Run back analysis
         logger.info(f"[{session_id}] Starting back side analysis")
-        back_analysis = analyze_single_side(analysis_image_path, "back")
+        back_analysis = analyze_single_side(
+            analysis_image_path,
+            "back",
+            detection_data={"border_fractions": detection.get("border_fractions")},
+        )
         
         # Enhanced corners for back if available
         if _enhanced_corners_available and detection["success"]:
