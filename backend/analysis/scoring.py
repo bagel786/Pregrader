@@ -222,15 +222,12 @@ class GradingEngine:
         # Apply penalty
         final_score = weighted_score - damage_penalty
 
-        # Floor + ceiling: anchor the grade around the weakest component.
-        # Floor prevents over-penalisation from the weighted average dragging
-        # the score below what individual components warrant.
-        # Ceiling prevents strong components from lifting the grade more than
-        # 1.0 point above the weakest component (PSA anchors on worst damage).
-        # Centering is included only when detection confidence is reliable.
+        # Floor + ceiling: anchor the grade around the weakest physical component.
+        # Centering is intentionally excluded — the PSA centering cap above already
+        # enforces its impact as a discrete hard ceiling. Including centering here
+        # would double-penalise: e.g. tb_ratio=0.568 → PSA cap=8 is correct, but
+        # centering score 6.3 would also impose ceiling 7.3 → PSA 7, which is wrong.
         floor_components = [result.corners_score, result.edges_score, result.surface_score]
-        if result.centering_confidence >= 0.6:
-            floor_components.append(result.centering_score)
         worst_component = min(floor_components)
         final_score = max(final_score, worst_component - 0.5)   # floor
         final_score = min(final_score, worst_component + 1.0)   # ceiling
