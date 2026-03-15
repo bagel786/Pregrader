@@ -15,6 +15,79 @@ from .vision.image_preprocessing import (
 logger = logging.getLogger(__name__)
 
 
+# ---------------------------------------------------------------------------
+# PRD Stage 2: centering cap tables and helpers
+# ---------------------------------------------------------------------------
+
+# Each entry: (min_ratio_threshold, max_psa_grade)
+# Ratios are min(smaller_border) / max(larger_border) for each axis.
+FRONT_CAP_TABLE = [
+    (0.818, 10),  # 55/45
+    (0.667,  9),  # 60/40
+    (0.538,  8),  # 65/35
+    (0.429,  7),  # 70/30
+    (0.333,  6),  # 75/25
+    (0.250,  5),  # 80/20
+    (0.176,  4),  # 85/15
+    (0.111,  3),  # 90/10
+    (0.000,  2),  # worse than 90/10
+]
+
+BACK_CAP_TABLE = [
+    (0.333, 10),  # 75/25
+    (0.111,  9),  # 90/10
+    (0.000,  5),  # worse than 90/10
+]
+
+
+def lookup_centering_cap(ratio: float, table: list) -> int:
+    """Return PSA centering cap for the given min/max border ratio."""
+    for threshold, cap in table:
+        if ratio >= threshold:
+            return cap
+    return table[-1][1]
+
+
+def interpolate_centering_score(ratio: float, table: list) -> float:
+    """
+    Continuous 1-10 centering score via linear interpolation between cap table entries.
+
+    Each entry (threshold, cap) is a breakpoint where score = cap.
+    Between breakpoints the score is linearly interpolated.
+    """
+    ratio = max(0.0, min(1.0, ratio))
+
+    # Above the highest threshold → perfect score
+    if ratio >= table[0][0]:
+        return 10.0
+
+    # Below the lowest threshold → worst score
+    if ratio < table[-1][0]:
+        return 1.0
+
+    for i in range(len(table) - 1):
+        r_high, cap_high = table[i]
+        r_low, cap_low = table[i + 1]
+        if r_low <= ratio < r_high:
+            t = (ratio - r_low) / (r_high - r_low)
+            return float(cap_low) + t * float(cap_high - cap_low)
+
+    return 1.0
+
+
+def _centering_cap_and_score(
+    lr_ratio: float,
+    tb_ratio: float,
+    is_front: bool,
+) -> tuple:
+    """Return (centering_cap, centering_score) for one card side."""
+    worst_ratio = min(lr_ratio, tb_ratio)
+    table = FRONT_CAP_TABLE if is_front else BACK_CAP_TABLE
+    cap = lookup_centering_cap(worst_ratio, table)
+    score = interpolate_centering_score(worst_ratio, table)
+    return cap, round(score, 2)
+
+
 def detect_inner_artwork_box(image: np.ndarray) -> Optional[np.ndarray]:
     """
     Detect the inner artwork/text box of a Pokémon card.
@@ -427,6 +500,7 @@ def calculate_centering_ratios(
     image_path: str,
     debug_output_path: Optional[str] = None,
     vision_border_fractions: Optional[Dict] = None,
+    is_front: bool = True,
 ) -> Dict:
     """
     Analyze card centering and return detailed measurements.
@@ -451,9 +525,11 @@ def calculate_centering_ratios(
         return {
             "success": False,
             "error": "Could not load image",
-            "score": 5.0
+            "score": 5.0,
+            "centering_cap": 10,
+            "centering_score": 5.0,
         }
-    
+
     # Find card boundary
     card_contour = find_card_contour(image)
     if card_contour is None:
@@ -461,7 +537,9 @@ def calculate_centering_ratios(
             "success": False,
             "error": "Could not detect card boundary",
             "score": 5.0,
-            "grade_estimate": 5.0
+            "grade_estimate": 5.0,
+            "centering_cap": 10,
+            "centering_score": 5.0,
         }
     
     # Get corners and apply perspective correction
@@ -495,10 +573,12 @@ def calculate_centering_ratios(
             right_pct  = (right  / total_lr * 100) if total_lr > 0 else 50.0
             top_pct    = (top    / total_tb * 100) if total_tb > 0 else 50.0
             bottom_pct = (bottom / total_tb * 100) if total_tb > 0 else 50.0
+            cap, cap_score = _centering_cap_and_score(lr_ratio, tb_ratio, is_front)
             logger.info(
                 f"Centering via vision_ai: "
                 f"L={left:.0f} R={right:.0f} T={top:.0f} B={bottom:.0f} "
-                f"lr_ratio={lr_ratio:.3f} tb_ratio={tb_ratio:.3f} score={score:.1f}"
+                f"lr_ratio={lr_ratio:.3f} tb_ratio={tb_ratio:.3f} score={score:.1f} "
+                f"cap={cap} cap_score={cap_score}"
             )
             return {
                 "success": True,
@@ -516,6 +596,8 @@ def calculate_centering_ratios(
                     "top_bottom_ratio": f"{top_pct:.1f}/{bottom_pct:.1f}",
                 },
                 "confidence": 0.90,
+                "centering_cap": cap,
+                "centering_score": cap_score,
             }
         else:
             logger.warning(
@@ -595,17 +677,18 @@ def calculate_centering_ratios(
         # Calculate score normally
         score = calculate_centering_score(left, right, top, bottom)
     
+    cap, cap_score = _centering_cap_and_score(lr_ratio, tb_ratio, is_front)
     logger.info(
         f"Centering via {detection_method}: "
         f"L={left:.0f} R={right:.0f} T={top:.0f} B={bottom:.0f} "
         f"lr_ratio={lr_ratio:.3f} tb_ratio={tb_ratio:.3f} "
-        f"score={score:.1f}"
+        f"score={score:.1f} cap={cap} cap_score={cap_score}"
     )
-    
+
     # Calculate percentages for display
     total_lr = left + right
     total_tb = top + bottom
-    
+
     left_pct = (left / total_lr * 100) if total_lr > 0 else 50.0
     right_pct = (right / total_lr * 100) if total_lr > 0 else 50.0
     top_pct = (top / total_tb * 100) if total_tb > 0 else 50.0
@@ -678,5 +761,7 @@ def calculate_centering_ratios(
             "left_right_ratio": f"{left_pct:.1f}/{right_pct:.1f}",
             "top_bottom_ratio": f"{top_pct:.1f}/{bottom_pct:.1f}"
         },
-        "confidence": confidence
+        "confidence": confidence,
+        "centering_cap": cap,
+        "centering_score": cap_score,
     }

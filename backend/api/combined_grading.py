@@ -1,17 +1,55 @@
 """
 Combined front + back card grading logic.
-Combines analysis from both sides using conservative (worst-case) approach.
+
+New pipeline (PRD architecture):
+  Stage 2: Centering (OpenCV, modified to output cap + score)
+  Stage 3: Visual Assessment (Vision AI via vision_assessor)
+  Stage 4: Grade Assembly (pure logic via grade_assembler)
 """
 import cv2
 import numpy as np
+import logging
 from typing import Dict, Optional, Tuple
 from pathlib import Path
 
 from analysis.centering import calculate_centering_ratios
-from analysis.corners import analyze_corner_wear
-from analysis.edges import analyze_edge_wear, detect_card_side
-from analysis.surface import analyze_surface_damage
-from analysis.scoring import GradingEngine
+from grading.vision_assessor import assess_card, VisionAssessorError
+from grading.grade_assembler import (
+    assemble_grade,
+    AssemblyInput,
+    CornerScores,
+    EdgeScores,
+    SurfaceScores,
+    CenteringResult,
+)
+
+logger = logging.getLogger(__name__)
+
+
+def detect_card_side(image: np.ndarray) -> Tuple[str, float]:
+    """
+    Detect if image shows card front or back based on blue hue dominance.
+    Pokemon backs have >40% blue pixels; fronts have varied colors.
+    (Inlined from analysis/deprecated/edges.py to remove dependency on deprecated module.)
+    """
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    blue_mask = cv2.inRange(hsv, np.array([90, 50, 30]), np.array([140, 255, 255]))
+    blue_pct = cv2.countNonZero(blue_mask) / blue_mask.size * 100
+    yellow_mask = cv2.inRange(hsv, np.array([20, 80, 100]), np.array([40, 255, 255]))
+    yellow_pct = cv2.countNonZero(yellow_mask) / yellow_mask.size * 100
+
+    if blue_pct > 40 and yellow_pct < 5:
+        return "back", min(1.0, blue_pct / 60)
+    if blue_pct < 20:
+        return "front", min(1.0, (100 - blue_pct) / 80)
+    return "front", 0.6
+
+
+# PSA grade string formatter: 8.0 → "8", 8.5 → "8.5"
+def _psa_label(grade: float) -> str:
+    if grade == int(grade):
+        return str(int(grade))
+    return str(grade)
 
 
 def analyze_single_side(
@@ -21,102 +59,213 @@ def analyze_single_side(
     detection_data: Optional[Dict] = None,
 ) -> Dict:
     """
-    Run full analysis on a single card side.
-    Sequential processing to minimize memory usage.
-    
-    Args:
-        image_path: Path to card image
-        side: "front" or "back"
-        debug_output_dir: Optional directory for debug images
-        
+    Run analysis on a single card side.
+
+    In the new architecture this only computes centering — corner/edge/surface
+    assessment requires both sides and is done later in combine_front_back_analysis
+    via the Vision AI assessor.
+
     Returns:
-        Dict with all analysis results for this side
+        Dict with centering, detected_as, image_path, and None placeholders for
+        corners/edges/surface (for backward-compat with main.py preview).
     """
-    debug_suffix = f"_{side}_" if debug_output_dir else None
-    
     results = {
         "side": side,
         "detected_as": None,
         "centering": None,
-        "corners": None,
-        "edges": None,
-        "surface": None,
-        "errors": []
+        "corners": None,    # populated later by vision assessor
+        "edges": None,      # populated later by vision assessor
+        "surface": None,    # populated later by vision assessor
+        "image_path": image_path,
+        "errors": [],
     }
-    
-    # Load image once and reuse
+
     image = cv2.imread(image_path)
     if image is None:
         results["errors"].append("Failed to load image")
         return results
-    
+
     # Auto-detect front vs back
     detected_side, side_confidence = detect_card_side(image)
     results["detected_as"] = detected_side
     results["side_detection_confidence"] = side_confidence
-    
-    # Centering: only on front (or if user said front)
-    if side == "front" or detected_side == "front":
-        try:
-            centering_path = None
-            if debug_output_dir:
-                centering_path = str(debug_output_dir / f"{side}_centering.jpg")
-            vision_border_fractions = detection_data.get("border_fractions") if detection_data else None
-            results["centering"] = calculate_centering_ratios(
-                image_path,
-                debug_output_path=centering_path,
-                vision_border_fractions=vision_border_fractions,
-            )
-        except Exception as e:
-            results["errors"].append(f"Centering failed: {str(e)}")
-            results["centering"] = {"error": str(e), "grade_estimate": 5.0, "confidence": 0.3}
-    
-    # Corners
+
+    # Centering — computed for both sides; is_front selects the cap table
+    is_front = (side == "front") or (detected_side == "front")
     try:
-        results["corners"] = analyze_corner_wear(image_path)
-    except Exception as e:
-        results["errors"].append(f"Corners failed: {str(e)}")
-        results["corners"] = {"error": str(e)}
-    
-    # Edges
-    try:
-        edges_path = None
+        centering_path = None
         if debug_output_dir:
-            edges_path = str(debug_output_dir / f"{side}_edges.jpg")
-        results["edges"] = analyze_edge_wear(image_path, debug_output_path=edges_path)
+            centering_path = str(debug_output_dir / f"{side}_centering.jpg")
+        vision_border_fractions = detection_data.get("border_fractions") if detection_data else None
+        results["centering"] = calculate_centering_ratios(
+            image_path,
+            debug_output_path=centering_path,
+            vision_border_fractions=vision_border_fractions,
+            is_front=is_front,
+        )
     except Exception as e:
-        results["errors"].append(f"Edges failed: {str(e)}")
-        results["edges"] = {"error": str(e)}
-    
-    # Surface
-    try:
-        results["surface"] = analyze_surface_damage(image_path, is_front=(detected_side == "front"))
-    except Exception as e:
-        results["errors"].append(f"Surface failed: {str(e)}")
-        results["surface"] = {"error": str(e)}
-    
+        results["errors"].append(f"Centering failed: {str(e)}")
+        results["centering"] = {
+            "error": str(e),
+            "grade_estimate": 5.0,
+            "confidence": 0.3,
+            "centering_cap": 10,
+            "centering_score": 5.0,
+        }
+
     return results
+
+
+def _build_centering_result(
+    front_centering: Dict,
+    back_centering: Dict,
+) -> CenteringResult:
+    """
+    Combine front and back centering into a CenteringResult for the assembler.
+    The effective cap is min(front_cap, back_cap).
+    Confidence is the minimum of the two (conservative).
+    """
+    front_cap = front_centering.get("centering_cap", 10)
+    back_cap = back_centering.get("centering_cap", 10)
+    front_score = float(front_centering.get("centering_score", 5.0))
+    back_score = float(back_centering.get("centering_score", 5.0))
+    front_conf = float(front_centering.get("confidence", 0.5))
+    back_conf = float(back_centering.get("confidence", 0.5))
+
+    return CenteringResult(
+        centering_cap=min(front_cap, back_cap),
+        front_centering_score=front_score,
+        back_centering_score=back_score,
+        confidence=min(front_conf, back_conf),
+    )
+
+
+def _vision_to_assembly_input(
+    vision: Dict,
+    centering: CenteringResult,
+) -> AssemblyInput:
+    """Build AssemblyInput from vision assessor output and centering result."""
+    c = vision["corners"]
+    e = vision["edges"]
+    s = vision["surface"]
+
+    corners = CornerScores(
+        front_top_left=float(c["front_top_left"]["score"]),
+        front_top_right=float(c["front_top_right"]["score"]),
+        front_bottom_left=float(c["front_bottom_left"]["score"]),
+        front_bottom_right=float(c["front_bottom_right"]["score"]),
+        back_top_left=float(c["back_top_left"]["score"]),
+        back_top_right=float(c["back_top_right"]["score"]),
+        back_bottom_left=float(c["back_bottom_left"]["score"]),
+        back_bottom_right=float(c["back_bottom_right"]["score"]),
+    )
+
+    edges = EdgeScores(
+        front_top=float(e["front_top"]["score"]),
+        front_right=float(e["front_right"]["score"]),
+        front_bottom=float(e["front_bottom"]["score"]),
+        front_left=float(e["front_left"]["score"]),
+        back_top=float(e["back_top"]["score"]),
+        back_right=float(e["back_right"]["score"]),
+        back_bottom=float(e["back_bottom"]["score"]),
+        back_left=float(e["back_left"]["score"]),
+    )
+
+    surface = SurfaceScores(
+        front=float(s["front"]["score"]),
+        back=float(s["back"]["score"]),
+    )
+
+    corner_defects = {k: v.get("defects", []) for k, v in c.items()}
+    edge_defects = {k: v.get("defects", []) for k, v in e.items()}
+    surface_defects = {
+        "front": s["front"].get("defects", []),
+        "back": s["back"].get("defects", []),
+    }
+    corner_confidences = {k: float(v.get("confidence", 1.0)) for k, v in c.items()}
+    edge_confidences = {k: float(v.get("confidence", 1.0)) for k, v in e.items()}
+    surface_confidences = {
+        "front": float(s["front"].get("confidence", 1.0)),
+        "back": float(s["back"].get("confidence", 1.0)),
+    }
+
+    return AssemblyInput(
+        corners=corners,
+        edges=edges,
+        surface=surface,
+        centering=centering,
+        corner_defects=corner_defects,
+        edge_defects=edge_defects,
+        surface_defects=surface_defects,
+        corner_confidences=corner_confidences,
+        edge_confidences=edge_confidences,
+        surface_confidences=surface_confidences,
+    )
+
+
+def _assemble_result_to_compat(assembler_result: Dict, vision: Dict) -> Dict:
+    """
+    Map grade_assembler output to a format compatible with main.py's expectations.
+
+    main.py reads:
+      combined["grade"]["psa_estimate"]  ← log + response
+      combined["grade"]                  ← full grade response field
+      combined["centering"]              ← details
+      combined["corners"]                ← details
+      combined["edges"]                  ← details
+      combined["surface"]                ← details
+    """
+    final_grade = assembler_result["final_grade"]
+
+    # Add backward-compat fields to the grade dict
+    grade_out = dict(assembler_result)
+    grade_out["psa_estimate"] = _psa_label(final_grade)
+    grade_out["final_score"] = assembler_result["composite_score"]
+    grade_out["grading_status"] = "success"
+
+    # Build details sections from vision AI output for backward compat
+    corners_out = {
+        "corners": {
+            k: {"score": v["score"], "defects": v.get("defects", [])}
+            for k, v in vision["corners"].items()
+        },
+        "overall_grade": assembler_result["dimension_scores"]["corners"]["blended"],
+    }
+    edges_out = {
+        "score": assembler_result["dimension_scores"]["edges"]["blended"],
+        "overall_grade": assembler_result["dimension_scores"]["edges"]["blended"],
+        "front_avg": assembler_result["dimension_scores"]["edges"]["front_avg"],
+        "back_avg": assembler_result["dimension_scores"]["edges"]["back_avg"],
+        "edge_details": {
+            k: {"score": v["score"]}
+            for k, v in vision["edges"].items()
+        },
+    }
+    surface_out = {
+        "surface": {
+            "score": assembler_result["dimension_scores"]["surface"]["blended"],
+            "front_score": vision["surface"]["front"]["score"],
+            "back_score": vision["surface"]["back"]["score"],
+            "front_defects": vision["surface"]["front"].get("defects", []),
+            "back_defects": vision["surface"]["back"].get("defects", []),
+            "front_staining": vision["surface"]["front"].get("staining", "none"),
+            "back_staining": vision["surface"]["back"].get("staining", "none"),
+            "front_gloss": vision["surface"]["front"].get("gloss", "original gloss intact"),
+        }
+    }
+
+    return grade_out, corners_out, edges_out, surface_out
 
 
 def combine_front_back_analysis(
     front_analysis: Dict,
-    back_analysis: Dict
+    back_analysis: Dict,
 ) -> Dict:
     """
-    Combine front and back analysis using conservative approach.
-    
-    Strategy:
-    - Centering: Front only (back centering not meaningful)
-    - Surface: Worst of front/back scores
-    - Corners: Average of all 8 corners
-    - Edges: Worst of front/back scores
-    
-    Args:
-        front_analysis: Results from analyze_single_side("front")
-        back_analysis: Results from analyze_single_side("back")
-        
-    Returns:
-        Dict with combined analysis and final grade
+    Combine front and back analysis using the new Vision AI pipeline.
+
+    Requires front_analysis["image_path"] and back_analysis["image_path"]
+    to be set (done by analyze_single_side).
     """
     combined = {
         "analysis_type": "combined_front_back",
@@ -124,145 +273,77 @@ def combine_front_back_analysis(
         "corners": None,
         "edges": None,
         "surface": None,
-        "warnings": []
+        "warnings": [],
     }
-    
-    # 1. CENTERING - Front only
-    if front_analysis.get("centering") and "error" not in front_analysis["centering"]:
-        combined["centering"] = front_analysis["centering"]
-    else:
-        combined["centering"] = {"grade_estimate": 5.0, "confidence": 0.3, "error": "Could not analyze centering"}
-        combined["warnings"].append("Centering could not be analyzed")
-    
-    # 2. CORNERS - Worst-case biased blend (70% worst side, 30% better side)
-    front_corners = front_analysis.get("corners", {})
-    back_corners = back_analysis.get("corners", {})
-    
-    all_corner_scores = []
-    combined_corners = {"corners": {}}
-    front_corner_scores = []
-    back_corner_scores = []
-    
-    for side_name, side_corners, side_list in [
-        ("front", front_corners, front_corner_scores),
-        ("back", back_corners, back_corner_scores)
-    ]:
-        if "corners" in side_corners:
-            # Standard format: {corners: {corner_name: {score: X}}}
-            for corner_name, corner_data in side_corners["corners"].items():
-                key = f"{side_name}_{corner_name}"
-                combined_corners["corners"][key] = corner_data
-                score = corner_data.get("score", 5.0)
-                all_corner_scores.append(score)
-                side_list.append(score)
-        elif "individual_scores" in side_corners:
-            # Enhanced corners format: {individual_scores: [s1, s2, s3, s4]}
-            corner_names = ["top_left", "top_right", "bottom_right", "bottom_left"]
-            for i, score in enumerate(side_corners["individual_scores"]):
-                name = corner_names[i] if i < len(corner_names) else f"corner_{i}"
-                key = f"{side_name}_{name}"
-                combined_corners["corners"][key] = {"score": score}
-                all_corner_scores.append(score)
-                side_list.append(score)
-    
-    if front_corner_scores and back_corner_scores:
-        # 55% worst side / 45% better side — conservative but not extreme
-        front_avg = sum(front_corner_scores) / len(front_corner_scores)
-        back_avg = sum(back_corner_scores) / len(back_corner_scores)
-        worse = min(front_avg, back_avg)
-        better = max(front_avg, back_avg)
-        combined_corners["overall_grade"] = round(worse * 0.55 + better * 0.45, 1)
-    elif all_corner_scores:
-        combined_corners["overall_grade"] = round(sum(all_corner_scores) / len(all_corner_scores), 1)
-    else:
-        combined_corners["overall_grade"] = 5.0
-        combined["warnings"].append("Corner analysis incomplete")
-    
-    combined["corners"] = combined_corners
-    
-    # 3. EDGES - Worst-case biased blend (70% worst side, 30% better side)
-    front_edges = front_analysis.get("edges", {})
-    back_edges = back_analysis.get("edges", {})
-    
-    front_edge_score = front_edges.get("score", front_edges.get("grade_estimate", 10.0))
-    back_edge_score = back_edges.get("score", back_edges.get("grade_estimate", 10.0))
-    
-    # Front-aware blend: front edges matter more to PSA graders than back edges.
-    if front_edge_score <= back_edge_score:   # front is worse
-        blended_edge_score = round(front_edge_score * 0.65 + back_edge_score * 0.35, 1)
-    else:                                      # back is worse (more forgiving)
-        blended_edge_score = round(back_edge_score * 0.55 + front_edge_score * 0.45, 1)
-    
-    if back_edge_score < front_edge_score:
-        combined["edges"] = back_edges.copy()
-        combined["edges"]["source"] = "back"
-    else:
-        combined["edges"] = front_edges.copy()
-        combined["edges"]["source"] = "front"
-    
-    # Override the score with the blended value
-    combined["edges"]["score"] = blended_edge_score
-    combined["edges"]["overall_grade"] = blended_edge_score
-    
-    # 4. SURFACE - 65/35 weighted blend (worse/better), consistent with corners/edges.
-    # Pure worst-case would unfairly penalise cards with a pristine front and
-    # minor back scratch as harshly as fully-damaged cards.
-    front_surface = front_analysis.get("surface", {}).get("surface", {})
-    back_surface = back_analysis.get("surface", {}).get("surface", {})
 
-    front_surface_score = front_surface.get("score", 10.0)
-    back_surface_score = back_surface.get("score", 10.0)
+    # Load corrected card images
+    front_path = front_analysis.get("image_path")
+    back_path = back_analysis.get("image_path")
 
-    # Front-aware blend: PSA tolerates minor back surface blemishes more than front ones.
-    if front_surface_score <= back_surface_score:   # front is worse
-        blended_surface_score = round(front_surface_score * 0.70 + back_surface_score * 0.30, 1)
-    else:                                             # back is worse (more forgiving)
-        blended_surface_score = round(back_surface_score * 0.60 + front_surface_score * 0.40, 1)
-
-    # Use the worse side's metadata (scratch_count, major_damage_detected, etc.)
-    # but override the score with the blended value.
-    if back_surface_score < front_surface_score:
-        combined["surface"] = {"surface": dict(back_surface)}
-        combined["surface"]["source"] = "back"
-    else:
-        combined["surface"] = {"surface": dict(front_surface)}
-        combined["surface"]["source"] = "front"
-
-    # major_damage from either side should propagate (it's genuinely additive)
-    if front_surface.get("major_damage_detected") or back_surface.get("major_damage_detected"):
-        combined["surface"]["surface"]["major_damage_detected"] = True
-
-    combined["surface"]["surface"]["score"] = blended_surface_score
-    
-    # Calculate final grade
-    try:
-        # Propagate Claude Vision quality signals from front detection if available
-        quality_assessment = front_analysis.get("detection", {}).get("quality_assessment")
-        centering_data = combined["centering"] or {}
-        centering_conf = centering_data.get("confidence", 0.5)
-        grading_result = GradingEngine.calculate_grade(
-            centering_score=centering_data.get("grade_estimate", 5.0),
-            corners_data=combined["corners"],
-            edges_data=combined["edges"],
-            surface_data=combined["surface"].get("surface", {"score": 5.0}),
-            centering_confidence=centering_conf,
-            quality_assessment=quality_assessment,
-            # Only apply PSA centering cap when detection is reliable enough.
-            # Unreliable measurements (cross-axis mismatch, low confidence) are
-            # already excluded from floor/ceiling via centering_confidence < 0.6;
-            # also exclude them from the hard cap so a bad gradient reading
-            # doesn't lower an otherwise well-graded card.
-            centering_lr_ratio=centering_data.get("lr_ratio") if centering_conf >= 0.6 else None,
-            centering_tb_ratio=centering_data.get("tb_ratio") if centering_conf >= 0.6 else None,
-        )
-        combined["grade"] = grading_result
-    except Exception as e:
+    if not front_path or not back_path:
         combined["grade"] = {
-            "error": str(e),
+            "error": "Image paths missing from analysis",
             "psa_estimate": "?",
-            "final_score": 0
+            "final_score": 0,
         }
-        combined["warnings"].append(f"Grading calculation failed: {str(e)}")
+        combined["warnings"].append("Could not load images for Vision AI assessment")
+        return combined
+
+    front_img = cv2.imread(front_path)
+    back_img = cv2.imread(back_path)
+
+    if front_img is None or back_img is None:
+        combined["grade"] = {
+            "error": "Could not read card images",
+            "psa_estimate": "?",
+            "final_score": 0,
+        }
+        combined["warnings"].append("Image load failed")
+        return combined
+
+    # Stage 3: Vision AI assessment
+    try:
+        vision_result = assess_card(front_img, back_img)
+        if vision_result.get("low_confidence_flags"):
+            combined["warnings"].append(
+                f"Low confidence on: {', '.join(vision_result['low_confidence_flags'])}"
+            )
+    except VisionAssessorError as exc:
+        combined["grade"] = {
+            "error": str(exc),
+            "psa_estimate": "?",
+            "final_score": 0,
+        }
+        combined["warnings"].append(f"Vision AI assessment failed: {exc}")
+        return combined
+
+    # Stage 2: Build centering result from both sides
+    front_centering = front_analysis.get("centering") or {
+        "centering_cap": 10,
+        "centering_score": 5.0,
+        "confidence": 0.3,
+    }
+    back_centering = back_analysis.get("centering") or {
+        "centering_cap": 10,
+        "centering_score": 5.0,
+        "confidence": 0.3,
+    }
+    centering_result = _build_centering_result(front_centering, back_centering)
+
+    # Stage 4: Grade assembly
+    inputs = _vision_to_assembly_input(vision_result, centering_result)
+    assembler_out = assemble_grade(inputs)
+
+    # Map to compat format
+    grade_out, corners_out, edges_out, surface_out = _assemble_result_to_compat(
+        assembler_out, vision_result
+    )
+
+    combined["grade"] = grade_out
+    combined["centering"] = front_centering  # keep original centering data for details
+    combined["corners"] = corners_out
+    combined["edges"] = edges_out
+    combined["surface"] = surface_out
 
     return combined
 
@@ -270,57 +351,68 @@ def combine_front_back_analysis(
 def grade_card_session(
     front_path: str,
     back_path: Optional[str] = None,
-    debug_output_dir: Optional[Path] = None
+    debug_output_dir: Optional[Path] = None,
 ) -> Tuple[Dict, Dict]:
     """
-    Convenience function to grade a card with front and optional back.
-    
-    Args:
-        front_path: Path to front image
-        back_path: Optional path to back image
-        debug_output_dir: Optional directory for debug images
-        
+    Grade a card with front and optional back image.
+
     Returns:
         Tuple of (combined_result, individual_sides_dict)
     """
     front_analysis = analyze_single_side(front_path, "front", debug_output_dir)
-    
+
     if back_path:
         back_analysis = analyze_single_side(back_path, "back", debug_output_dir)
         combined = combine_front_back_analysis(front_analysis, back_analysis)
     else:
-        # Single-side grading
-        combined = {
-            "analysis_type": "front_only",
-            "centering": front_analysis.get("centering"),
-            "corners": front_analysis.get("corners"),
-            "edges": front_analysis.get("edges"),
-            "surface": front_analysis.get("surface"),
-            "warnings": ["Back not provided - single-side analysis"]
-        }
-        
-        # Calculate grade
-        centering = combined["centering"] or {}
+        # Front-only: run vision assessor with front image as both sides.
+        # Centering uses front cap table for both (conservative default).
         try:
-            quality_assessment = front_analysis.get("detection", {}).get("quality_assessment")
-            centering_conf = centering.get("confidence", 0.3)
-            grading_result = GradingEngine.calculate_grade(
-                centering_score=centering.get("grade_estimate", 5.0),
-                corners_data=combined["corners"] if combined["corners"] else {"corners": {}, "overall_grade": 5.0},
-                edges_data=combined["edges"] if combined["edges"] else {"score": 5.0},
-                surface_data=combined["surface"].get("surface", {"score": 5.0}) if combined["surface"] else {"score": 5.0},
-                centering_confidence=centering_conf,
-                quality_assessment=quality_assessment,
-                centering_lr_ratio=centering.get("lr_ratio") if centering_conf >= 0.6 else None,
-                centering_tb_ratio=centering.get("tb_ratio") if centering_conf >= 0.6 else None,
+            front_img = cv2.imread(front_path)
+            if front_img is None:
+                raise VisionAssessorError("Could not load front image")
+            vision_result = assess_card(front_img, front_img)
+            centering_data = front_analysis.get("centering") or {
+                "centering_cap": 10,
+                "centering_score": 5.0,
+                "confidence": 0.3,
+            }
+            centering_result = CenteringResult(
+                centering_cap=centering_data.get("centering_cap", 10),
+                front_centering_score=float(centering_data.get("centering_score", 5.0)),
+                back_centering_score=float(centering_data.get("centering_score", 5.0)),
+                confidence=float(centering_data.get("confidence", 0.3)),
             )
-            combined["grade"] = grading_result
-        except Exception as e:
-            combined["grade"] = {"error": str(e), "psa_estimate": "?", "final_score": 0}
-    
+            inputs = _vision_to_assembly_input(vision_result, centering_result)
+            assembler_out = assemble_grade(inputs)
+            grade_out, corners_out, edges_out, surface_out = _assemble_result_to_compat(
+                assembler_out, vision_result
+            )
+            combined = {
+                "analysis_type": "front_only",
+                "centering": centering_data,
+                "corners": corners_out,
+                "edges": edges_out,
+                "surface": surface_out,
+                "grade": grade_out,
+                "warnings": ["Back not provided — front-only analysis (back side duplicated)"],
+            }
+        except VisionAssessorError as exc:
+            combined = {
+                "analysis_type": "front_only",
+                "centering": front_analysis.get("centering"),
+                "corners": None,
+                "edges": None,
+                "surface": None,
+                "grade": {"error": str(exc), "psa_estimate": "?", "final_score": 0},
+                "warnings": [f"Vision AI assessment failed: {exc}"],
+            }
+
+        back_analysis = None
+
     individual = {
         "front": front_analysis,
-        "back": back_analysis if back_path else None
+        "back": back_analysis,
     }
-    
+
     return combined, individual

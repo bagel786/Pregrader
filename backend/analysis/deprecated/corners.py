@@ -1,3 +1,6 @@
+# DEPRECATED: Superseded by backend/grading/vision_assessor.py
+# Corner analysis is now performed by Vision AI. This file is retained for
+# reference and potential hybrid fallback if needed during calibration.
 import cv2
 import numpy as np
 import logging

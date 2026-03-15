@@ -1,3 +1,7 @@
+# DEPRECATED: Superseded by backend/grading/vision_assessor.py
+# Edge analysis is now performed by Vision AI. detect_card_side() has been
+# inlined into backend/api/combined_grading.py. This file is retained for
+# reference and potential hybrid fallback if needed during calibration.
 """
 Advanced edge wear detection using color space analysis.
 Supports both card front (various border colors) and back (blue).
@@ -320,28 +324,11 @@ def analyze_edge_wear(
             "grade_estimate": 5.0
         }
 
-    # Check if contour is suspiciously close to full image (full-frame fallback)
+    # The analysis image is always the perspective-corrected card (card fills frame).
+    # A contour covering >95% of the image means the card IS the full frame — this
+    # is the expected state, not a detection failure. We proceed with the border
+    # analysis using the outer edge of the image as the card boundary.
     h, w = image.shape[:2]
-    contour_area = cv2.contourArea(card_contour)
-    image_area = h * w
-    full_frame_fallback = contour_area > (image_area * 0.95)
-
-    if full_frame_fallback:
-        # Contour covers >95% of the image — likely the full-frame fallback,
-        # not a real card boundary. Return moderate default with low confidence.
-        return {
-            "success": True,
-            "score": 5.0,
-            "overall_grade": 5.0,
-            "grade_estimate": 5.0,
-            "overall_whitening_pct": 0.0,
-            "condition": "Edge analysis inconclusive - card boundary not detected",
-            "worn_edges_list": [],
-            "worn_edge_count": 0,
-            "edges": {e: {"score": 5.0} for e in ['top', 'right', 'bottom', 'left']},
-            "detailed_edges": {},
-            "confidence": 0.3,
-        }
 
     # Detect if this is front or back of card
     card_side, side_confidence = detect_card_side(image)
