@@ -34,9 +34,12 @@ FRONT_CAP_TABLE = [
 ]
 
 BACK_CAP_TABLE = [
-    (0.333, 10),  # 75/25
-    (0.111,  9),  # 90/10
-    (0.000,  5),  # worse than 90/10
+    (0.333, 10),  # 75/25 — PSA Gem Mint back standard
+    (0.111,  9),  # 90/10 — PSA back is lenient here
+    (0.083,  8),  # ~92/8
+    (0.053,  7),  # ~95/5
+    (0.026,  6),  # ~97.5/2.5
+    (0.000,  5),  # worse than above
 ]
 
 

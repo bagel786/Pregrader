@@ -204,12 +204,14 @@ class GradingEngine:
         result.surface_confidence = surface_data.get("confidence", 0.5)
         
         # 2. PSA-aligned Weighted Calculation
-        # PSA weights corners and edges more heavily than centering and surface
+        # Centering is intentionally excluded from the weighted score — it already
+        # operates as a hard cap on the PSA label (step 4a). Including it here would
+        # double-penalise off-centre cards: once by pulling the numeric score down and
+        # again by the cap clipping the label.
         weighted_score = (
-            result.centering_score * 0.20 +
-            result.corners_score * 0.30 +
-            result.edges_score * 0.30 +
-            result.surface_score * 0.20
+            result.corners_score * 0.35 +
+            result.edges_score * 0.35 +
+            result.surface_score * 0.30
         )
         
         # 3. Damage penalties — only for damage not already captured by component scores.

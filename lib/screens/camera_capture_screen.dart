@@ -106,8 +106,14 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen> {
         }
         newDetected = _weightedAverageRects(_rectHistory);
 
+        // Hysteresis band: enter ready at 0.25, exit below 0.15.
+        // Prevents the overlay from flickering when the card hovers near
+        // a single threshold (e.g. card drifts between 0.14 and 0.16).
         final area = newDetected.width * newDetected.height;
-        if (area > 0.15) {
+        const double areaEnterThreshold = 0.25;
+        const double areaExitThreshold = 0.15;
+        final bool wasReady = _readiness == CameraReadiness.ready;
+        if (area > areaEnterThreshold || (wasReady && area > areaExitThreshold)) {
           newReadiness = CameraReadiness.ready;
           newHint = 'Card detected — tap to capture';
         } else {

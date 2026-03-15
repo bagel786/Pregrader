@@ -90,6 +90,10 @@ async def detect_and_correct_card(
         log["final_method"] = method
         log["total_time_ms"] = total_ms
         _record_stat(method)
+        logger.info(
+            f"[BRANCH] session={session_id} branch=opencv sub={opencv_result.get('method')} "
+            f"conf={opencv_result['confidence']:.2f} time={total_ms}ms"
+        )
 
         return {
             "success": True,
@@ -113,6 +117,10 @@ async def detect_and_correct_card(
     if ai_result.get("success"):
         log["final_method"] = "hybrid_ai"
         _record_stat("hybrid_ai")
+        logger.info(
+            f"[BRANCH] session={session_id} branch=vision_ai "
+            f"conf={ai_result['confidence']:.2f} time={total_ms}ms"
+        )
 
         return {
             "success": True,
@@ -125,10 +133,14 @@ async def detect_and_correct_card(
             "detection_log": log,
         }
 
-    # Both failed --------------------------------------------------------------
+    # Both failed — client falls back to static guide crop --------------------
     log["final_method"] = "failed"
     _record_stat("failed")
-    logger.warning(f"[{session_id}] Both OpenCV and AI detection failed")
+    logger.warning(
+        f"[BRANCH] session={session_id} branch=failed "
+        f"opencv_conf={opencv_result.get('confidence', 0):.2f} "
+        f"ai_conf={ai_result.get('confidence', 0):.2f} time={total_ms}ms"
+    )
 
     return {
         "success": False,
