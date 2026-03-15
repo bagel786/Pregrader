@@ -263,8 +263,8 @@ async def upload_front_image(
             try:
                 corrected_img = detection["corrected_image"]
                 enhanced = analyze_corners_enhanced(corrected_img, side="front")
-                enhanced_confidence = enhanced.get("confidence", 0.0)
-                basic_grade = front_analysis.get("corners", {}).get("overall_grade", 5.0)
+                enhanced_confidence = (enhanced or {}).get("confidence", 0.0)
+                basic_grade = (front_analysis.get("corners") or {}).get("overall_grade", 5.0)
                 if enhanced_confidence >= 0.7:
                     front_analysis["corners"] = enhanced
                     logger.info(f"[{session_id}] Enhanced corners accepted: {enhanced.get('overall_grade', 0):.1f} (conf={enhanced_confidence:.2f})")
@@ -295,10 +295,10 @@ async def upload_front_image(
             "session_id": session_id,
             "status": "front_uploaded",
             "front_analysis_preview": {
-                "centering": front_analysis.get("centering", {}).get("grade_estimate"),
-                "surface": front_analysis.get("surface", {}).get("surface", {}).get("score"),
-                "corners": front_analysis.get("corners", {}).get("overall_grade"),
-                "edges": front_analysis.get("edges", {}).get("score"),
+                "centering": (front_analysis.get("centering") or {}).get("grade_estimate"),
+                "surface": ((front_analysis.get("surface") or {}).get("surface") or {}).get("score"),
+                "corners": (front_analysis.get("corners") or {}).get("overall_grade"),
+                "edges": (front_analysis.get("edges") or {}).get("score"),
                 "detected_as": front_analysis.get("detected_as")
             },
             "detection": {
@@ -396,8 +396,8 @@ async def upload_back_image(
         if _enhanced_corners_available and detection["success"]:
             try:
                 enhanced = analyze_corners_enhanced(detection["corrected_image"], side="back")
-                enhanced_confidence = enhanced.get("confidence", 0.0)
-                basic_grade = back_analysis.get("corners", {}).get("overall_grade", 5.0)
+                enhanced_confidence = (enhanced or {}).get("confidence", 0.0)
+                basic_grade = (back_analysis.get("corners") or {}).get("overall_grade", 5.0)
                 if enhanced_confidence >= 0.7:
                     back_analysis["corners"] = enhanced
                     logger.info(f"[{session_id}] Enhanced back corners accepted: {enhanced.get('overall_grade', 0):.1f} (conf={enhanced_confidence:.2f})")
