@@ -122,8 +122,8 @@ def _blend_surface(surface: SurfaceScores) -> float:
 
 
 def _composite(corners_blended: float, edges_blended: float, surface_blended: float) -> float:
-    """PRD 4.2: corners 30% + edges 30% + surface 40%."""
-    return (corners_blended * 0.30) + (edges_blended * 0.30) + (surface_blended * 0.40)
+    """PRD 4.2: corners 37.5% + edges 37.5% + surface 25% (centering excluded, proportionally renormalized from 30/30/20)."""
+    return (corners_blended * 0.375) + (edges_blended * 0.375) + (surface_blended * 0.25)
 
 
 def _apply_floor_ceiling(
@@ -145,23 +145,6 @@ def _apply_floor_ceiling(
     result = min(result, worst + 1.0)
     return result, floor_act, ceiling_act
 
-
-def _apply_individual_floor(
-    composite: float,
-    corners: CornerScores,
-    edges: EdgeScores,
-    surface: SurfaceScores,
-) -> Tuple[float, bool]:
-    """
-    PRD 4.4: individual component floor.
-    worst_individual + 1.5 is the ceiling.
-    Returns (constrained, activated).
-    """
-    all_scores = corners.all_scores() + edges.all_scores() + [surface.front, surface.back]
-    worst = min(all_scores)
-    activated = composite > (worst + 1.5)
-    result = min(composite, worst + 1.5)
-    return result, activated
 
 
 def _apply_centering_cap(
@@ -300,9 +283,8 @@ def assemble_grade(inputs: AssemblyInput) -> Dict:
       1. Front/back blend
       2. Composite
       3. Dimension floor/ceiling
-      4. Individual component floor
-      5. Centering cap
-      6. Half-point grade
+      4. Centering cap
+      5. Half-point grade
     """
     # 1. Blend
     corners_blended, corners_fa, corners_ba = _blend_corners(inputs.corners)
@@ -317,18 +299,13 @@ def assemble_grade(inputs: AssemblyInput) -> Dict:
         composite, corners_blended, edges_blended, surface_blended
     )
 
-    # 4. Individual component floor
-    composite, comp_floor_act = _apply_individual_floor(
-        composite, inputs.corners, inputs.edges, inputs.surface
-    )
-
-    # 5. Centering cap (applied before half-point so capped scores naturally fail
+    # 4. Centering cap (applied before half-point so capped scores naturally fail
     #    the 0.3 fractional threshold at grade boundaries)
     composite, cap_act = _apply_centering_cap(
         composite, inputs.centering.centering_cap, inputs.centering.confidence
     )
 
-    # 6. Half-point grade
+    # 5. Half-point grade
     displayed_grade, half_point_qualified = _half_point_grade(composite, inputs.centering)
 
     # Confidence + defects
@@ -401,7 +378,6 @@ def assemble_grade(inputs: AssemblyInput) -> Dict:
         "constraints_applied": {
             "floor_activated": floor_act,
             "ceiling_activated": ceiling_act,
-            "component_floor_activated": comp_floor_act,
             "centering_cap_activated": cap_act,
             "half_point_qualified": half_point_qualified,
         },

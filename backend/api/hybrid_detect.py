@@ -285,12 +285,44 @@ def _extract_card_from_edges(img: np.ndarray, edges: np.ndarray) -> Dict:
     M = cv2.getPerspectiveTransform(corners, dst_pts)
     warped = cv2.warpPerspective(img, M, (500, 700))
 
+    # Post-warp quality check: reject warps that captured background, not a card
+    warp_quality = _check_warp_quality(warped)
+    if warp_quality < 0.5:
+        logger.warning(
+            f"Post-warp quality check failed (score={warp_quality:.2f}) — "
+            "border strips not uniform; likely a background crop"
+        )
+        return {"success": False, "confidence": best_score * warp_quality}
+
     return {
         "success": True,
         "confidence": best_score,
         "corners": corners.tolist(),
         "corrected_image": warped,
     }
+
+
+def _check_warp_quality(warped: np.ndarray) -> float:
+    """
+    Verify the warped image looks like a card by checking border uniformity.
+
+    Samples 10-pixel strips along all 4 edges.  A real card border (white,
+    black, or any solid colour) has low pixel-to-pixel variation.  A misaligned
+    warp capturing background/table/grass will have high variation and fail.
+
+    Returns a score in [0.0, 1.0]: fraction of edges that pass (std < 45).
+    A score < 0.5 means at least 3 edges look like background — reject the warp.
+    """
+    STRIP_W = 10
+    gray = cv2.cvtColor(warped, cv2.COLOR_BGR2GRAY)
+    strips = [
+        gray[:STRIP_W, :],    # top
+        gray[-STRIP_W:, :],   # bottom
+        gray[:, :STRIP_W],    # left
+        gray[:, -STRIP_W:],   # right
+    ]
+    passes = sum(1 for s in strips if float(np.std(s)) < 45.0)
+    return passes / len(strips)
 
 
 def _order_points(pts: np.ndarray) -> np.ndarray:

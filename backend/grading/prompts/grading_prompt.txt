@@ -115,4 +115,4 @@ Score rules:
 - Use only .0 or .5 increments (e.g., 7.0, 7.5, 8.0)
 - Confidence is your certainty about the score: 1.0 = fully certain, 0.5 = uncertain due to image quality
 - defects is an empty array [] if no defects are observed
-- Be conservative: if in doubt between two scores, choose the lower one
+- Score to the evidence visible in the image. Choose the lower score only when a specific defect (corner rounding, edge chipping, surface scratch) is clearly locatable in the crop. Do not penalize for busy artwork, holographic patterns, image glare, or when crop quality makes fine detail hard to see.

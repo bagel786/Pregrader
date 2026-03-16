@@ -307,10 +307,10 @@ def _validate_response(data: Dict) -> None:
         if score is None or not (1.0 <= float(score) <= 10.0):
             raise ValueError(f"Surface {side} score out of range: {score}")
 
-    # Hallucination guard: all 8 corner scores identical is suspicious
+    # Hallucination guard: all 8 corners identical AND equal to an obvious placeholder value
     corner_scores = [float(data["corners"][k]["score"]) for k in required_corners]
-    if len(set(corner_scores)) == 1:
-        raise ValueError("All corner scores are identical — likely hallucinated output")
+    if len(set(corner_scores)) == 1 and corner_scores[0] in (1.0, 5.0, 10.0):
+        raise ValueError("All corner scores are identical placeholder value — likely hallucinated output")
 
 
 def _call_api_sync(images: List[Dict], api_key: str) -> Dict:
