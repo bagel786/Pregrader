@@ -195,9 +195,12 @@ def _make_edge_composite(img: np.ndarray) -> np.ndarray:
 
     # Composite: top / left | right (side-by-side) / bottom
     lr_row = np.concatenate([left, np.full((max_h_vert, 2, 3), 255, dtype=np.uint8), right], axis=1)
-    top_pad = _pad_w(top, lr_row.shape[1])
-    bottom_pad = _pad_w(bottom, lr_row.shape[1])
-    sep = np.full((2, lr_row.shape[1], 3), 255, dtype=np.uint8)
+    # Portrait cards have wider top/bottom strips than lr_row; use the max width for all elements.
+    composite_w = max(lr_row.shape[1], top.shape[1], bottom.shape[1])
+    top_pad = _pad_w(top, composite_w)
+    bottom_pad = _pad_w(bottom, composite_w)
+    lr_row = _pad_w(lr_row, composite_w)
+    sep = np.full((2, composite_w, 3), 255, dtype=np.uint8)
 
     composite = np.concatenate([top_pad, sep, lr_row, sep, bottom_pad], axis=0)
     return composite
