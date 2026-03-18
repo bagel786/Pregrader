@@ -91,17 +91,19 @@ def analyze_single_side(
     results["side_detection_confidence"] = side_confidence
 
     # Centering — computed for both sides; is_front selects the cap table
-    is_front = (side == "front") or (detected_side == "front")
+    is_front = (side == "front")
     try:
         centering_path = None
         if debug_output_dir:
             centering_path = str(debug_output_dir / f"{side}_centering.jpg")
         vision_border_fractions = detection_data.get("border_fractions") if detection_data else None
+        already_corrected = bool(detection_data.get("already_corrected")) if detection_data else False
         results["centering"] = calculate_centering_ratios(
             image_path,
             debug_output_path=centering_path,
             vision_border_fractions=vision_border_fractions,
             is_front=is_front,
+            already_corrected=already_corrected,
         )
     except Exception as e:
         results["errors"].append(f"Centering failed: {str(e)}")

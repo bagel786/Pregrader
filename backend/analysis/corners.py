@@ -246,7 +246,7 @@ class CornerDetector:
         if area > 0.3 * white_mask.size:
             _, _, w, h = cv2.boundingRect(largest)
             aspect = w / h if h > 0 else 0
-            if 0.8 < aspect < 1.2 or aspect > 3 or aspect < 0.33:
+            if 0.8 < aspect < 1.2:  # only square blobs are plausibly uniform material
                 return True
         return False
 

@@ -504,21 +504,26 @@ def calculate_centering_ratios(
     debug_output_path: Optional[str] = None,
     vision_border_fractions: Optional[Dict] = None,
     is_front: bool = True,
+    already_corrected: bool = False,
 ) -> Dict:
     """
     Analyze card centering and return detailed measurements.
-    
+
     Uses a multi-method approach:
+    0. Vision AI border fractions (when provided by detection stage)
     1. Try artwork box detection (most precise)
     2. Fall back to gradient-based border detection (most reliable)
     3. Fall back to saturation-based border detection (legacy)
-    
+
     Includes validation to detect and handle unreliable measurements.
-    
+
     Args:
         image_path: Path to card image
         debug_output_path: Optional path to save debug visualization
-        
+        already_corrected: True when image_path points to a pre-warped card image
+            (e.g. front_corrected.jpg from the detection stage). Skips find_card_contour
+            and perspective_correct_card — avoids double-warp corruption.
+
     Returns:
         Dict with centering analysis results
     """
@@ -533,25 +538,8 @@ def calculate_centering_ratios(
             "centering_score": 5.0,
         }
 
-    # Find card boundary
-    card_contour = find_card_contour(image)
-    if card_contour is None:
-        return {
-            "success": False,
-            "error": "Could not detect card boundary",
-            "score": 5.0,
-            "grade_estimate": 5.0,
-            "centering_cap": 10,
-            "centering_score": 5.0,
-        }
-    
-    # Get corners and apply perspective correction
-    corners = get_card_corners(card_contour)
-    corrected = perspective_correct_card(image, corners)
-
-    img_height, img_width = corrected.shape[:2]
-
-    # Method 0: Vision AI border fractions (highest priority when available)
+    # Method 0: Vision AI border fractions (highest priority when available).
+    # Must be checked BEFORE find_card_contour so it works on pre-corrected images.
     # The Vision API already saw this card during detection and returns the border
     # widths as fractions of card dimension — color/type agnostic and works for all cards.
     if vision_border_fractions is not None:
@@ -563,10 +551,11 @@ def calculate_centering_ratios(
         # Values outside this range indicate the model returned 0 (unknown) or an
         # implausibly wide border — fall through to OpenCV methods in those cases.
         if all(0.01 <= f <= 0.30 for f in (frac_l, frac_r, frac_t, frac_b)):
-            left   = frac_l * img_width
-            right  = frac_r * img_width
-            top    = frac_t * img_height
-            bottom = frac_b * img_height
+            img_height_v, img_width_v = image.shape[:2]
+            left   = frac_l * img_width_v
+            right  = frac_r * img_width_v
+            top    = frac_t * img_height_v
+            bottom = frac_b * img_height_v
             lr_ratio = min(left, right) / max(left, right) if max(left, right) > 0 else 1.0
             tb_ratio = min(top, bottom) / max(top, bottom) if max(top, bottom) > 0 else 1.0
             score = calculate_centering_score(left, right, top, bottom)
@@ -608,6 +597,27 @@ def calculate_centering_ratios(
                 f"(L={frac_l}, R={frac_r}, T={frac_t}, B={frac_b}), "
                 f"falling through to OpenCV methods"
             )
+
+    # Card detection / perspective correction.
+    # When already_corrected=True the caller has already warped the card — skip
+    # find_card_contour + perspective_correct_card to avoid a second (corrupting) warp.
+    if already_corrected:
+        corrected = image
+    else:
+        card_contour = find_card_contour(image)
+        if card_contour is None:
+            return {
+                "success": False,
+                "error": "Could not detect card boundary",
+                "score": 5.0,
+                "grade_estimate": 5.0,
+                "centering_cap": 10,
+                "centering_score": 5.0,
+            }
+        corners = get_card_corners(card_contour)
+        corrected = perspective_correct_card(image, corners)
+
+    img_height, img_width = corrected.shape[:2]
 
     # Method 1: Detect inner artwork box
     artwork_box = detect_inner_artwork_box(corrected)

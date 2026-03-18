@@ -201,20 +201,19 @@ def _try_opencv_detection(image_path: str) -> Dict:
     return best
 
 
-_clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-
-
 def _opencv_standard(img: np.ndarray) -> Dict:
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    gray = _clahe.apply(gray)
+    gray = clahe.apply(gray)
     blurred = cv2.GaussianBlur(gray, (5, 5), 0)
     edges = cv2.Canny(blurred, 50, 150)
     return _extract_card_from_edges(img, edges)
 
 
 def _opencv_adaptive(img: np.ndarray) -> Dict:
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    gray = _clahe.apply(gray)
+    gray = clahe.apply(gray)
     blurred = cv2.GaussianBlur(gray, (5, 5), 0)
     thresh = cv2.adaptiveThreshold(
         blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2
@@ -223,8 +222,9 @@ def _opencv_adaptive(img: np.ndarray) -> Dict:
 
 
 def _opencv_morphological(img: np.ndarray) -> Dict:
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    gray = _clahe.apply(gray)
+    gray = clahe.apply(gray)
     blurred = cv2.GaussianBlur(gray, (5, 5), 0)
     edges = cv2.Canny(blurred, 50, 150)
     kernel = np.ones((3, 3), np.uint8)
@@ -233,8 +233,9 @@ def _opencv_morphological(img: np.ndarray) -> Dict:
 
 
 def _opencv_lab(img: np.ndarray) -> Dict:
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
     lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
-    l_channel = _clahe.apply(lab[:, :, 0])
+    l_channel = clahe.apply(lab[:, :, 0])
     blurred = cv2.GaussianBlur(l_channel, (5, 5), 0)
     edges = cv2.Canny(blurred, 30, 90)  # lower thresholds tuned for low-light L channel
     return _extract_card_from_edges(img, edges)

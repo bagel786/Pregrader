@@ -4,6 +4,7 @@ Grading workflow routes: upload front/back images and retrieve results.
 import time
 import logging
 import cv2
+from pathlib import Path
 from fastapi import APIRouter, HTTPException, UploadFile, File
 
 from api.session_manager import get_session_manager
@@ -43,7 +44,7 @@ async def upload_front_image(
             raise HTTPException(status_code=400, detail="File too large. Maximum 15MB per image.")
 
         session_dir = session_manager.get_session_dir(session_id)
-        front_path = session_dir / f"front_{file.filename}"
+        front_path = session_dir / f"front_{Path(file.filename).name}"
         with open(front_path, "wb") as f:
             f.write(content)
         del content
@@ -76,19 +77,24 @@ async def upload_front_image(
             corrected_path = session_dir / "front_corrected.jpg"
             cv2.imwrite(str(corrected_path), detection["corrected_image"])
             analysis_image_path = str(corrected_path)
+            detection_succeeded = True
             logger.info(
                 f"[{session_id}] Card detected via {detection_method} "
                 f"(confidence={detection_confidence:.2f})"
             )
         else:
             analysis_image_path = str(front_path)
+            detection_succeeded = False
             logger.info(f"[{session_id}] Detection failed, analyzing raw image")
 
         logger.info(f"[{session_id}] Starting front side analysis")
         front_analysis = analyze_single_side(
             analysis_image_path,
             "front",
-            detection_data={"border_fractions": detection.get("border_fractions")},
+            detection_data={
+                "border_fractions": detection.get("border_fractions"),
+                "already_corrected": detection_succeeded,
+            },
         )
 
         if detection["success"]:
@@ -181,7 +187,7 @@ async def upload_back_image(
             raise HTTPException(status_code=400, detail="File too large. Maximum 15MB per image.")
 
         session_dir = session_manager.get_session_dir(session_id)
-        back_path = session_dir / f"back_{file.filename}"
+        back_path = session_dir / f"back_{Path(file.filename).name}"
         with open(back_path, "wb") as f:
             f.write(content)
         del content
@@ -212,16 +218,21 @@ async def upload_back_image(
             corrected_path = session_dir / "back_corrected.jpg"
             cv2.imwrite(str(corrected_path), detection["corrected_image"])
             analysis_image_path = str(corrected_path)
+            back_detection_succeeded = True
             logger.info(f"[{session_id}] Back card detected via {detection['method']}")
         else:
             analysis_image_path = str(back_path)
+            back_detection_succeeded = False
             logger.info(f"[{session_id}] Back detection failed, analyzing raw image")
 
         logger.info(f"[{session_id}] Starting back side analysis")
         back_analysis = analyze_single_side(
             analysis_image_path,
             "back",
-            detection_data={"border_fractions": detection.get("border_fractions")},
+            detection_data={
+                "border_fractions": detection.get("border_fractions"),
+                "already_corrected": back_detection_succeeded,
+            },
         )
 
         if detection["success"]:

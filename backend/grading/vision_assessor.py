@@ -446,12 +446,14 @@ def _average_passes(pass1: Dict, pass2: Dict) -> Dict:
         c2 = float(pass2["surface"][side].get("confidence", 1.0))
         d1 = pass1["surface"][side].get("defects", [])
         d2 = pass2["surface"][side].get("defects", [])
+        # Use labels from the worse-scoring pass so they match the numeric direction.
+        label_pass = pass1 if s1 <= s2 else pass2
         result["surface"][side] = {
             "score": round((s1 + s2) / 2, 1),
             "defects": list(dict.fromkeys(d1 + d2)),
-            "staining": pass1["surface"][side].get("staining", "none"),
-            "gloss": pass1["surface"][side].get("gloss", "original gloss intact"),
-            "print_registration": pass1["surface"][side].get("print_registration", "normal"),
+            "staining": label_pass["surface"][side].get("staining", "none"),
+            "gloss": label_pass["surface"][side].get("gloss", "original gloss intact"),
+            "print_registration": label_pass["surface"][side].get("print_registration", "normal"),
             "confidence": round((c1 + c2) / 2, 3),
         }
 
@@ -459,7 +461,7 @@ def _average_passes(pass1: Dict, pass2: Dict) -> Dict:
 
 
 def _median_of_three(pass1: Dict, pass2: Dict, pass3: Dict) -> Dict:
-    """Take the median numeric score across 3 passes; use first-pass strings."""
+    """Take the median numeric score across 3 passes; use strings from the lowest-scoring pass."""
     result = {
         "corners": {},
         "edges": {},
@@ -511,27 +513,22 @@ def _median_of_three(pass1: Dict, pass2: Dict, pass3: Dict) -> Dict:
         }
 
     for side in ("front", "back"):
-        scores = [
-            float(pass1["surface"][side]["score"]),
-            float(pass2["surface"][side]["score"]),
-            float(pass3["surface"][side]["score"]),
-        ]
-        confs = [
-            float(pass1["surface"][side].get("confidence", 1.0)),
-            float(pass2["surface"][side].get("confidence", 1.0)),
-            float(pass3["surface"][side].get("confidence", 1.0)),
-        ]
+        passes = [pass1, pass2, pass3]
+        scores = [float(p["surface"][side]["score"]) for p in passes]
+        confs = [float(p["surface"][side].get("confidence", 1.0)) for p in passes]
         defects = list(dict.fromkeys(
             pass1["surface"][side].get("defects", []) +
             pass2["surface"][side].get("defects", []) +
             pass3["surface"][side].get("defects", [])
         ))
+        # Use labels from the worst-scoring pass so they stay consistent with the numeric score.
+        label_pass = passes[scores.index(min(scores))]
         result["surface"][side] = {
             "score": statistics.median(scores),
             "defects": defects,
-            "staining": pass1["surface"][side].get("staining", "none"),
-            "gloss": pass1["surface"][side].get("gloss", "original gloss intact"),
-            "print_registration": pass1["surface"][side].get("print_registration", "normal"),
+            "staining": label_pass["surface"][side].get("staining", "none"),
+            "gloss": label_pass["surface"][side].get("gloss", "original gloss intact"),
+            "print_registration": label_pass["surface"][side].get("print_registration", "normal"),
             "confidence": round(statistics.median(confs), 3),
         }
 
