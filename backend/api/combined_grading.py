@@ -225,6 +225,80 @@ def _assemble_result_to_compat(assembler_result: Dict, vision: Dict) -> Dict:
     grade_out["final_score"] = assembler_result["composite_score"]
     grade_out["grading_status"] = "success"
 
+    # Sub-scores for the 4-tile UI grid
+    grade_out["sub_scores"] = {
+        "centering": assembler_result["centering_score"],
+        "corners": round(assembler_result["dimension_scores"]["corners"]["blended"], 1),
+        "edges": round(assembler_result["dimension_scores"]["edges"]["blended"], 1),
+        "surface": round(assembler_result["dimension_scores"]["surface"]["blended"], 1),
+    }
+
+    # Grade range: show boundary when composite is within 0.3 of the next PSA threshold
+    _GRADE_BRACKETS = [
+        (9.5, "10"), (9.0, "9"), (8.0, "8"), (7.0, "7"), (6.0, "6"),
+        (5.0, "5"), (4.0, "4"), (3.0, "3"), (2.0, "2"), (1.0, "1"),
+    ]
+    psa_label = grade_out["psa_estimate"]
+    composite = assembler_result["composite_score"]
+    grade_range = psa_label
+    for i, (thresh, label) in enumerate(_GRADE_BRACKETS):
+        if label == psa_label and i > 0:
+            upper_thresh, upper_label = _GRADE_BRACKETS[i - 1]
+            if composite >= upper_thresh - 0.3:
+                grade_range = f"{psa_label}-{upper_label}"
+            break
+    grade_out["grade_range"] = grade_range
+
+    # Explanations: human-readable summary for the Analysis Details section
+    sub = grade_out["sub_scores"]
+    constraints = assembler_result["constraints_applied"]
+    explanations = []
+
+    if constraints["centering_cap_activated"]:
+        explanations.append(f"⚠ Centering limited grade to PSA {assembler_result['centering_cap']}")
+    elif sub["centering"] >= 9.5:
+        explanations.append("✓ Excellent centering")
+    elif sub["centering"] >= 7.5:
+        explanations.append("⚠ Slightly off-center")
+    else:
+        explanations.append("✗ Poor centering")
+
+    if sub["corners"] >= 9.5:
+        explanations.append("✓ Sharp corners")
+    elif sub["corners"] >= 8.0:
+        explanations.append("⚠ Minor corner wear")
+    else:
+        explanations.append("✗ Significant corner damage")
+
+    if sub["edges"] >= 9.5:
+        explanations.append("✓ Clean edges")
+    elif sub["edges"] >= 8.0:
+        explanations.append("⚠ Minor edge wear")
+    else:
+        explanations.append("✗ Multiple edges show wear")
+
+    if sub["surface"] >= 9.5:
+        explanations.append("✓ Pristine surface")
+    elif sub["surface"] >= 8.5:
+        explanations.append("⚠ Minor surface imperfections")
+    elif sub["surface"] >= 7.0:
+        explanations.append("⚠ Visible surface wear")
+    else:
+        explanations.append("✗ Significant surface damage")
+
+    for defect in assembler_result.get("defects", []):
+        if defect.get("severity") in ("moderate", "severe"):
+            loc = defect["location"].replace("_", " ").title()
+            desc = defect.get("description", "damage detected")
+            explanations.append(f"⚠ {loc}: {desc}")
+
+    if constraints["floor_activated"]:
+        explanations.append("⚠ Grade floor applied (worst dimension drag)")
+    if constraints["ceiling_activated"]:
+        explanations.append("⚠ Grade ceiling applied")
+
+    grade_out["explanations"] = explanations
+
     # Build details sections from vision AI output for backward compat
     corners_out = {
         "corners": {
