@@ -9,7 +9,6 @@ Uses the same httpx pattern as backend/services/ai/vision_detector.py.
 
 import os
 import base64
-import io
 import json
 import logging
 import statistics
@@ -393,6 +392,25 @@ def _call_api_sync(images: List[Dict], api_key: str) -> Dict:
 # Dual-pass averaging
 # ---------------------------------------------------------------------------
 
+_CREASE_ORDER    = ["none", "hairline", "moderate", "heavy"]
+_WHITENING_ORDER = ["none", "minor", "moderate", "extensive"]
+
+
+def _most_severe(a: Optional[str], b: Optional[str], order: list) -> Optional[str]:
+    """Return the more severe of two categorical labels, or None if both absent."""
+    ia = order.index(a) if a in order else -1
+    ib = order.index(b) if b in order else -1
+    if ia < 0 and ib < 0:
+        return None
+    return order[max(ia, ib)]
+
+
+def _most_severe_of_three(a: Optional[str], b: Optional[str], c: Optional[str], order: list) -> Optional[str]:
+    """Return the most severe of three categorical labels, or None if all absent."""
+    ranked = [order.index(x) for x in (a, b, c) if x in order]
+    return order[max(ranked)] if ranked else None
+
+
 def _extract_numeric_scores(data: Dict) -> Dict[str, float]:
     """Flatten all numeric scores from response into a flat key→score dict."""
     scores = {}
@@ -454,6 +472,17 @@ def _average_passes(pass1: Dict, pass2: Dict) -> Dict:
             "staining": label_pass["surface"][side].get("staining", "none"),
             "gloss": label_pass["surface"][side].get("gloss", "original gloss intact"),
             "print_registration": label_pass["surface"][side].get("print_registration", "normal"),
+            # For damage fields use "most severe wins" — we never want to average away real damage.
+            "crease_depth": _most_severe(
+                pass1["surface"][side].get("crease_depth"),
+                pass2["surface"][side].get("crease_depth"),
+                _CREASE_ORDER,
+            ),
+            "whitening_coverage": _most_severe(
+                pass1["surface"][side].get("whitening_coverage"),
+                pass2["surface"][side].get("whitening_coverage"),
+                _WHITENING_ORDER,
+            ),
             "confidence": round((c1 + c2) / 2, 3),
         }
 
@@ -529,6 +558,19 @@ def _median_of_three(pass1: Dict, pass2: Dict, pass3: Dict) -> Dict:
             "staining": label_pass["surface"][side].get("staining", "none"),
             "gloss": label_pass["surface"][side].get("gloss", "original gloss intact"),
             "print_registration": label_pass["surface"][side].get("print_registration", "normal"),
+            # Most severe wins across all three passes — real damage shouldn't be voted away.
+            "crease_depth": _most_severe_of_three(
+                pass1["surface"][side].get("crease_depth"),
+                pass2["surface"][side].get("crease_depth"),
+                pass3["surface"][side].get("crease_depth"),
+                _CREASE_ORDER,
+            ),
+            "whitening_coverage": _most_severe_of_three(
+                pass1["surface"][side].get("whitening_coverage"),
+                pass2["surface"][side].get("whitening_coverage"),
+                pass3["surface"][side].get("whitening_coverage"),
+                _WHITENING_ORDER,
+            ),
             "confidence": round(statistics.median(confs), 3),
         }
 

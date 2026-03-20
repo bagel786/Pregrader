@@ -83,47 +83,6 @@ def calculate_color_balance(image: np.ndarray) -> Tuple[bool, float, str]:
     return True, ratio, None
 
 
-def validate_image_quality(image: np.ndarray) -> Tuple[bool, float, List[str]]:
-    """
-    Quick validation for real-time camera feedback.
-    
-    Args:
-        image: Input BGR image (numpy array)
-        
-    Returns:
-        Tuple of (is_valid, quality_score, list of issues)
-    """
-    issues = []
-    
-    # 1. Blur Detection (Laplacian Variance)
-    blur_score = calculate_blur_score(image)
-    if blur_score < 100:
-        issues.append("Image too blurry - please hold camera steady")
-    
-    # 2. Exposure Check
-    brightness = calculate_brightness(image)
-    if brightness < 40:
-        issues.append("Image too dark - improve lighting")
-    elif brightness > 215:
-        issues.append("Image overexposed - reduce lighting/flash")
-    
-    # 3. Resolution Check
-    height, width = image.shape[:2]
-    if height < 800 or width < 600:
-        issues.append(f"Image resolution too low ({width}x{height}) - minimum 800x600px")
-    
-    # 4. Color Balance Check
-    is_balanced, _, color_issue = calculate_color_balance(image)
-    if not is_balanced and color_issue:
-        issues.append(color_issue)
-    
-    quality_score = 1.0 - (len(issues) * 0.25)
-    quality_score = max(0.0, quality_score)
-    is_valid = len(issues) == 0
-    
-    return is_valid, quality_score, issues
-
-
 def check_image_quality(image_path: str) -> Dict:
     """
     Perform comprehensive image quality checks.

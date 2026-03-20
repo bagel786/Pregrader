@@ -180,3 +180,43 @@ corners.py analyze_corners IS CALLED in grading.py but its result is NEVER used 
 3. Artwork box centering — inner frame vs outer border (still present, documented in previous audit)
 4. interpolate_centering_score loop fall-through at exact boundary ratios (floating point edge case)
 5. detect_border_widths off-by-one: border widths 1px too wide on all 4 sides
+
+## Algorithm Documentation (March 2026 — confirmed from code)
+
+### Composite weights (live)
+corners 37.5% + edges 37.5% + surface 25% = 100%. Centering excluded.
+
+### Blending weights (live, fixed front-weighted)
+corners 60/40, edges 65/35, surface 70/30. NOT adaptive worse/better — the MEMORY.md note is stale.
+
+### PSA centering cap tables
+FRONT: 55/45→10, 60/40→9, 65/35→8, 70/30→7, 75/25→6, 80/20→5, 85/15→4, 90/10→3, worse→2.
+BACK: much more lenient. 75/25→10, 90/10→9, ~92/8→8, ~95/5→7, ~97.5/2.5→6, worse→5.
+Effective cap = min(front_cap, back_cap). Front is almost always binding.
+
+### Floor/ceiling (live)
+worst_dim = min(corners_blended, edges_blended, surface_blended)
+floor: composite cannot go more than 0.5 below worst_dim.
+ceiling: composite cannot exceed worst_dim by more than 1.0.
+Centering NOT included in worst_dim computation.
+
+### Half-point display rule
+Requires fractional(composite) >= 0.3 AND min(front_centering_score, back_centering_score) >= floor(composite) + 1.
+centering_score here is the cap-table interpolated score, not the continuous avg-ratio score.
+
+### Two centering score functions (important distinction)
+calculate_centering_score(): uses AVERAGE of lr_ratio and tb_ratio. Stored as "score" in centering output dict.
+interpolate_centering_score(): uses WORST of lr_ratio and tb_ratio (via _centering_cap_and_score). Stored as centering_score in CenteringResult and used for half-point gate.
+These can diverge by a full grade point on asymmetric centering.
+
+### CORS origins (main.py)
+["https://pregrader-production.up.railway.app", "http://localhost:8000", "http://localhost:3000"]
+Port 3000 undocumented — appears to be web-dev convenience.
+
+### Grade range display
+Shown as "9-10" when composite >= upper_thresh - 0.3. PSA 10 never gets a range (index 0 in bracket list, no entry above).
+
+### Enhanced corners are dead computation
+grading.py calls analyze_corners_enhanced() and stores result in front_analysis["corners"].
+combine_front_back_analysis() ignores front_analysis["corners"] entirely — Vision AI scores are used.
+Wasted CPU on every successful detection.

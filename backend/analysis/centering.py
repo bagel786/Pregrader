@@ -33,6 +33,12 @@ FRONT_CAP_TABLE = [
     (0.000,  2),  # worse than 90/10
 ]
 
+# BACK_CAP_TABLE is significantly more lenient than FRONT_CAP_TABLE.
+# Rationale: PSA grades back centering much more leniently than front. A 75/25 back
+# (ratio ≈ 0.333) can still achieve Gem Mint (PSA 10) because the back design has
+# less visual weight and the eye forgives asymmetry more readily on the reverse.
+# A 90/10 back (ratio ≈ 0.111) caps at PSA 9 — equivalent to what a 60/40 front
+# (ratio ≈ 0.667) achieves. This mirrors observed PSA grading behavior.
 BACK_CAP_TABLE = [
     (0.333, 10),  # 75/25 — PSA Gem Mint back standard
     (0.111,  9),  # 90/10 — PSA back is lenient here
@@ -536,6 +542,7 @@ def calculate_centering_ratios(
             "score": 5.0,
             "centering_cap": 10,
             "centering_score": 5.0,
+            "centering_avg_score": 5.0,
         }
 
     # Method 0: Vision AI border fractions (highest priority when available).
@@ -589,7 +596,8 @@ def calculate_centering_ratios(
                 },
                 "confidence": 0.90,
                 "centering_cap": cap,
-                "centering_score": cap_score,
+                "centering_score": cap_score,    # worst-axis — used for cap enforcement
+                "centering_avg_score": round(score, 2),  # average-axis — used for half-point gate
             }
         else:
             logger.warning(
@@ -613,6 +621,7 @@ def calculate_centering_ratios(
                 "grade_estimate": 5.0,
                 "centering_cap": 10,
                 "centering_score": 5.0,
+                "centering_avg_score": 5.0,
             }
         corners = get_card_corners(card_contour)
         corrected = perspective_correct_card(image, corners)
@@ -737,17 +746,19 @@ def calculate_centering_ratios(
         
         cv2.imwrite(debug_output_path, debug_img)
     
-    # Determine confidence based on detection method
+    # Method-specific confidence ceilings. Values below 0.60 mean the centering cap
+    # and half-point gate are never triggered for that method — intentional design:
+    # gradient and saturation detection are too noisy to enforce hard caps reliably.
     if detection_method == "artwork_box":
-        confidence = 0.9
+        confidence = 0.90   # Actual card geometry — highest trust
     elif detection_method == "hsv_border":
-        confidence = 0.85
+        confidence = 0.75   # Color-based — reliable but not geometric
     elif detection_method == "gradient_detection":
-        confidence = 0.8
+        confidence = 0.50   # Sobel fires on artwork frames; never triggers cap threshold
     elif "fallback" in detection_method:
-        confidence = 0.5
+        confidence = 0.40   # All methods failed; too unreliable for cap enforcement
     else:
-        confidence = 0.7
+        confidence = 0.40   # Saturation-based last resort; same floor as fallback
 
     # Reliability signals: reduce confidence so callers know not to trust the measurement.
     # cross_axis_unreliable: gradient fired on the wrong edges (artwork frame instead of
@@ -776,5 +787,6 @@ def calculate_centering_ratios(
         },
         "confidence": confidence,
         "centering_cap": cap,
-        "centering_score": cap_score,
+        "centering_score": cap_score,        # worst-axis — used for cap enforcement
+        "centering_avg_score": round(score, 2),  # average-axis — used for half-point gate
     }

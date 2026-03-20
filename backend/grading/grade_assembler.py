@@ -41,6 +41,14 @@ class CornerScores:
         return (self.back_top_left + self.back_top_right +
                 self.back_bottom_left + self.back_bottom_right) / 4.0
 
+    def front_worst(self) -> float:
+        return min(self.front_top_left, self.front_top_right,
+                   self.front_bottom_left, self.front_bottom_right)
+
+    def back_worst(self) -> float:
+        return min(self.back_top_left, self.back_top_right,
+                   self.back_bottom_left, self.back_bottom_right)
+
 
 @dataclass
 class EdgeScores:
@@ -77,9 +85,19 @@ class SurfaceScores:
 @dataclass
 class CenteringResult:
     centering_cap: int           # min(front_cap, back_cap) — integer PSA max grade
-    front_centering_score: float # continuous 1-10, front side
-    back_centering_score: float  # continuous 1-10, back side
+    front_centering_score: float # worst-axis continuous 1-10, front side (for cap enforcement)
+    back_centering_score: float  # worst-axis continuous 1-10, back side (for cap enforcement)
     confidence: float            # from centering.py detection
+    # Average-axis scores: fairer overall centering picture, used only for half-point gate.
+    # Defaults to worst-axis values for backward compatibility.
+    front_avg_centering_score: Optional[float] = None
+    back_avg_centering_score: Optional[float] = None
+
+    def __post_init__(self):
+        if self.front_avg_centering_score is None:
+            self.front_avg_centering_score = self.front_centering_score
+        if self.back_avg_centering_score is None:
+            self.back_avg_centering_score = self.back_centering_score
 
 
 @dataclass
@@ -94,6 +112,9 @@ class AssemblyInput:
     corner_confidences: Dict[str, float] = field(default_factory=dict)
     edge_confidences: Dict[str, float] = field(default_factory=dict)
     surface_confidences: Dict[str, float] = field(default_factory=dict)
+    # Raw surface Vision AI dict keyed by "front"/"back". Used only for damage cap
+    # logic — not included in API response output.
+    surface_raw: Optional[Dict] = field(default=None)
 
 
 # ---------------------------------------------------------------------------
@@ -101,10 +122,17 @@ class AssemblyInput:
 # ---------------------------------------------------------------------------
 
 def _blend_corners(corners: CornerScores) -> Tuple[float, float, float]:
-    """PRD 4.1: corners 60/40 front-weighted. Returns (blended, front_avg, back_avg)."""
+    """
+    PRD 4.1: corners 60/40 front-weighted.
+    Each side score = 50% avg + 50% worst corner, so a single badly damaged corner
+    meaningfully drags the score down rather than being averaged away.
+    Returns (blended, front_avg, back_avg) — avgs are returned unchanged for display.
+    """
     fa = corners.front_avg()
     ba = corners.back_avg()
-    blended = (fa * 0.60) + (ba * 0.40)
+    front_score = (fa * 0.5) + (corners.front_worst() * 0.5)
+    back_score  = (ba * 0.5) + (corners.back_worst()  * 0.5)
+    blended = (front_score * 0.60) + (back_score * 0.40)
     return blended, fa, ba
 
 
@@ -141,10 +169,65 @@ def _apply_floor_ceiling(
     worst = min(corners_blended, edges_blended, surface_blended)
     floor_act = composite < (worst - 0.5)
     ceiling_act = composite > (worst + 1.0)
-    result = max(composite, worst - 0.5)
-    result = min(result, worst + 1.0)
+    # Clamp floor and ceiling to [1.0, 10.0] to prevent e.g. worst_dim=9.5 producing
+    # a ceiling of 10.5, or worst_dim=0.5 producing a floor below 1.0.
+    floor = max(worst - 0.5, 1.0)
+    ceiling = min(worst + 1.0, 10.0)
+    result = max(composite, floor)
+    result = min(result, ceiling)
     return result, floor_act, ceiling_act
 
+
+def _apply_damage_cap(
+    composite: float,
+    surface_raw: Optional[Dict],
+    surface_confidences: Dict[str, float],
+) -> Tuple[float, bool, Optional[str]]:
+    """
+    Hard cap for severe physical damage. Applied after floor/ceiling, before centering cap.
+    Only activated when surface confidence >= 0.60 for that side.
+
+    Cap rules (either side triggers):
+      heavy crease     → cap at 3.0
+      moderate crease  → cap at 5.0
+      extensive whitening → cap at 5.0
+
+    Returns (capped_composite, cap_activated, cap_reason).
+    """
+    if surface_raw is None:
+        return composite, False, None
+
+    CREASE_ORDER    = {"none": 0, "hairline": 1, "moderate": 2, "heavy": 3}
+    WHITENING_ORDER = {"none": 0, "minor": 1, "moderate": 2, "extensive": 3}
+    cap = None
+    reason = None
+
+    for side in ("front", "back"):
+        data = surface_raw.get(side, {})
+        if surface_confidences.get(side, 0.0) < 0.60:
+            continue  # Not confident enough in this side's damage detection
+
+        crease    = data.get("crease_depth")
+        whitening = data.get("whitening_coverage")
+
+        if crease and CREASE_ORDER.get(crease, 0) >= 3:     # heavy
+            if cap is None or cap > 3.0:
+                cap = 3.0
+                reason = f"heavy crease on {side} surface"
+        elif crease and CREASE_ORDER.get(crease, 0) >= 2:   # moderate
+            if cap is None or cap > 5.0:
+                cap = 5.0
+                reason = f"moderate crease on {side} surface"
+
+        if whitening and WHITENING_ORDER.get(whitening, 0) >= 3:  # extensive
+            if cap is None or cap > 5.0:
+                cap = 5.0
+                reason = f"extensive whitening on {side} surface"
+
+    if cap is not None and composite > cap:
+        return cap, True, reason
+
+    return composite, False, None
 
 
 def _apply_centering_cap(
@@ -166,13 +249,18 @@ def _apply_centering_cap(
 def _half_point_grade(final_score: float, centering: CenteringResult) -> Tuple[float, bool]:
     """
     PRD 4.6: half-point bump.
-    Requires score fractional >= 0.3 AND worst centering score >= base + 1.
+    Requires score fractional >= 0.3 AND worst AVERAGE-AXIS centering score >= base + 1.
+    Uses average-axis centering (not worst-axis) because worst-axis already does its job
+    as the hard cap upstream — applying it again here would double-penalise borderline cards.
     Returns (displayed_grade, qualified).
     """
     base = math.floor(final_score)
     fractional = final_score - base
-    worst_centering_score = min(centering.front_centering_score, centering.back_centering_score)
-    qualifies = (fractional >= 0.3) and (worst_centering_score >= base + 1)
+    worst_avg_centering = min(
+        centering.front_avg_centering_score,
+        centering.back_avg_centering_score,
+    )
+    qualifies = (fractional >= 0.3) and (worst_avg_centering >= base + 1)
     displayed = base + 0.5 if qualifies else float(base)
     return displayed, qualifies
 
@@ -283,6 +371,7 @@ def assemble_grade(inputs: AssemblyInput) -> Dict:
       1. Front/back blend
       2. Composite
       3. Dimension floor/ceiling
+      3.5. Damage cap (heavy crease / extensive whitening)
       4. Centering cap
       5. Half-point grade
     """
@@ -297,6 +386,12 @@ def assemble_grade(inputs: AssemblyInput) -> Dict:
     # 3. Dimension floor/ceiling
     composite, floor_act, ceiling_act = _apply_floor_ceiling(
         composite, corners_blended, edges_blended, surface_blended
+    )
+
+    # 3.5. Damage cap — must come before centering cap so that e.g. a heavy crease (cap=3)
+    # always wins over a loose centering cap (e.g. cap=6).
+    composite, damage_cap_act, damage_cap_reason = _apply_damage_cap(
+        composite, inputs.surface_raw, inputs.surface_confidences
     )
 
     # 4. Centering cap (applied before half-point so capped scores naturally fail
@@ -378,6 +473,8 @@ def assemble_grade(inputs: AssemblyInput) -> Dict:
         "constraints_applied": {
             "floor_activated": floor_act,
             "ceiling_activated": ceiling_act,
+            "damage_cap_activated": damage_cap_act,
+            "damage_cap_reason": damage_cap_reason,
             "centering_cap_activated": cap_act,
             "half_point_qualified": half_point_qualified,
         },

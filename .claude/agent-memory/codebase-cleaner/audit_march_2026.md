@@ -61,7 +61,7 @@ type: project
 Production import chain:
 - `main.py` → `api/routers/{sessions,grading,admin}.py`
 - `grading.py` router → `api/combined_grading.py`, `api/hybrid_detect.py`, `analysis/corners.py`, `analysis/vision/quality_checks.py`, `utils/serialization.py`
-- `combined_grading.py` → `grading/vision_assessor.py`, `grading/grade_assembler.py`, `analysis/scoring.py`, `analysis/centering.py`
+- `combined_grading.py` → `grading/vision_assessor.py`, `grading/grade_assembler.py`, `analysis/centering.py`
 - `centering.py` → `analysis/vision/image_preprocessing.py`
 - `hybrid_detect.py` → `services/ai/vision_detector.py`
 - `admin.py` router → `api/hybrid_detect.py` (get_detection_stats)
@@ -70,3 +70,28 @@ Production import chain:
 - `backend/grading/calibration/` directory now only contains `__init__.py` — consider removing the empty dir if nothing gets added
 - `GradeResult` model in `lib/screens/grade_result.dart` does NOT exist (was a false lead in project notes — no such file found)
 - `analysis/utils.py` had `order_points` + `find_card_contour` that duplicate what's in `image_preprocessing.py` — correctly deleted since deprecated modules were deleted
+
+---
+
+## Second Audit — 2026-03-19
+
+### What Was Deleted
+- `backend/analysis/scoring.py` — 363 lines. `GradingEngine` class completely superseded by `grade_assembler.py`. Zero production imports. The only consumer was the test file below.
+- `backend/tests/test_scoring.py` — 257 lines of tests exclusively for `GradingEngine`. No production value once `scoring.py` deleted.
+- `backend/analysis/test_images/` — 8 orphaned fixture images (offcenter/perfect/scratch/worn in .jpg + .png). No code references anywhere. Production directory clutter.
+
+### Internal Dead Code Removed
+- `import io` in `backend/grading/vision_assessor.py` — stdlib module imported but never used (no `io.` or `BytesIO` calls anywhere in file).
+- `validate_image_quality()` in `backend/analysis/vision/quality_checks.py` — top-level function never imported or called outside its own file. `check_image_quality()` is the active entrypoint used by `grading.py` router.
+- `getDebugVisualizationUrl()` in `lib/services/api_client.dart` — method never called anywhere in Flutter; backend has no matching route.
+- `quickCardCheck()` in `lib/core/utils/image_validator.dart` — method never called anywhere; `validateImage()` is the only used entrypoint.
+
+### Dependencies Removed from requirements.txt
+- `requests==2.32.3` — imported nowhere in backend Python code
+- `PyYAML==6.0.3` — imported nowhere in backend Python code
+
+### Patterns Confirmed
+- `backend/analysis/` is the main accumulation zone for dead code. After first audit removed deprecated/, this audit found scoring.py and test_images/ there.
+- Stdlib imports accumulate silently (io in vision_assessor). Worth scanning for unused stdlib imports in future audits.
+- Dead methods in active files (api_client.dart, image_validator.dart) don't show up in file-level scans — always check method-level too.
+- requirements.txt accumulates packages that were added experimentally. Scan against actual import statements in every audit.

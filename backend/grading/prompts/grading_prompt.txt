@@ -97,6 +97,8 @@ Return ONLY valid JSON with no preamble, no explanation, no markdown code fences
       "staining": "<none|minor wax residue|light stain|moderate stain|heavy stain>",
       "gloss": "<original gloss intact|slight gloss loss|moderate gloss loss|significant gloss loss>",
       "print_registration": "<normal|slight off-center print|print line disturbance|significant misregistration>",
+      "crease_depth": "<none|hairline|moderate|heavy>",
+      "whitening_coverage": "<none|minor|moderate|extensive>",
       "confidence": <float>
     },
     "back": {
@@ -105,6 +107,8 @@ Return ONLY valid JSON with no preamble, no explanation, no markdown code fences
       "staining": "<none|minor wax residue|light stain|moderate stain|heavy stain>",
       "gloss": "<original gloss intact|slight gloss loss|moderate gloss loss|significant gloss loss>",
       "print_registration": "<normal|slight off-center print|print line disturbance|significant misregistration>",
+      "crease_depth": "<none|hairline|moderate|heavy>",
+      "whitening_coverage": "<none|minor|moderate|extensive>",
       "confidence": <float>
     }
   }
@@ -116,3 +120,9 @@ Score rules:
 - Confidence is your certainty about the score: 1.0 = fully certain, 0.5 = uncertain due to image quality
 - defects is an empty array [] if no defects are observed
 - Score to the evidence visible in the image. Choose the lower score only when a specific defect (corner rounding, edge chipping, surface scratch) is clearly locatable in the crop. Do not penalize for busy artwork, holographic patterns, image glare, or when crop quality makes fine detail hard to see.
+
+Surface field guidance:
+- crease_depth: "none" = no crease visible; "hairline" = barely perceptible under raking light, surface not broken; "moderate" = visible under normal light, surface integrity partially compromised; "heavy" = obvious crease, surface broken or card bent. A surface score of 5.0 or above requires crease_depth "hairline" or "none".
+- whitening_coverage: "none" = no surface stress whitening from print or handling; "minor" = less than 10% of surface area; "moderate" = 10–30% of surface area showing whitening; "extensive" = more than 30% of surface area.
+- gloss rating is orthogonal to scratch presence. A card can have original gloss intact yet still have visible scratches. Score "gloss" based solely on the reflective sheen of the surface, not surface texture or scratch presence.
+- crease_depth and whitening_coverage are optional fields. Omit them entirely or set to null if you cannot assess them reliably from the available image quality.

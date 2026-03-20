@@ -9,7 +9,7 @@ New pipeline (PRD architecture):
 import cv2
 import numpy as np
 import logging
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 from pathlib import Path
 
 from analysis.centering import calculate_centering_ratios
@@ -131,6 +131,9 @@ def _build_centering_result(
     back_cap = back_centering.get("centering_cap", 10)
     front_score = float(front_centering.get("centering_score", 5.0))
     back_score = float(back_centering.get("centering_score", 5.0))
+    # Average-axis scores for half-point gate; fall back to worst-axis if absent.
+    front_avg = float(front_centering.get("centering_avg_score", front_score))
+    back_avg = float(back_centering.get("centering_avg_score", back_score))
     front_conf = float(front_centering.get("confidence", 0.5))
     back_conf = float(back_centering.get("confidence", 0.5))
 
@@ -139,6 +142,8 @@ def _build_centering_result(
         front_centering_score=front_score,
         back_centering_score=back_score,
         confidence=min(front_conf, back_conf),
+        front_avg_centering_score=front_avg,
+        back_avg_centering_score=back_avg,
     )
 
 
@@ -202,6 +207,7 @@ def _vision_to_assembly_input(
         corner_confidences=corner_confidences,
         edge_confidences=edge_confidences,
         surface_confidences=surface_confidences,
+        surface_raw=vision["surface"],  # For damage cap — not exposed in API response
     )
 
 
@@ -233,7 +239,11 @@ def _assemble_result_to_compat(assembler_result: Dict, vision: Dict) -> Dict:
         "surface": round(assembler_result["dimension_scores"]["surface"]["blended"], 1),
     }
 
-    # Grade range: show boundary when composite is within 0.3 of the next PSA threshold
+    # PSA grade bracket thresholds: composite_score >= thresh maps to that PSA label.
+    # Grade range (e.g. "8-9") is shown only when the composite is within 0.3 of the
+    # *next higher* bracket — meaning a small measurement error could push the card
+    # into the higher grade band. 0.3 avoids showing ranges on clear mid-grade cards
+    # while alerting on genuine boundary cases.
     _GRADE_BRACKETS = [
         (9.5, "10"), (9.0, "9"), (8.0, "8"), (7.0, "7"), (6.0, "6"),
         (5.0, "5"), (4.0, "4"), (3.0, "3"), (2.0, "2"), (1.0, "1"),
@@ -292,6 +302,9 @@ def _assemble_result_to_compat(assembler_result: Dict, vision: Dict) -> Dict:
             desc = defect.get("description", "damage detected")
             explanations.append(f"⚠ {loc}: {desc}")
 
+    if constraints.get("damage_cap_activated"):
+        reason = constraints.get("damage_cap_reason", "severe damage detected")
+        explanations.append(f"✗ Grade capped: {reason}")
     if constraints["floor_activated"]:
         explanations.append("⚠ Grade floor applied (worst dimension drag)")
     if constraints["ceiling_activated"]:
@@ -331,6 +344,46 @@ def _assemble_result_to_compat(assembler_result: Dict, vision: Dict) -> Dict:
     }
 
     return grade_out, corners_out, edges_out, surface_out
+
+
+def _apply_opencv_corner_cross_check(
+    vision: Dict,
+    front_analysis: Dict,
+    back_analysis: Dict,
+) -> Tuple[Dict, List[str]]:
+    """
+    Compare OpenCV corner overall_grade to Vision AI corner average for each side.
+    If they diverge by > 2.0, reduce all per-location corner confidences by 0.2
+    for that side and return a flag. Only reduces confidence — never changes scores.
+    This catches Vision AI hallucinating high corner scores on a visibly damaged card.
+    """
+    DIVERGE_THRESHOLD = 2.0
+    CONFIDENCE_PENALTY = 0.2
+    flags: List[str] = []
+
+    for side, analysis in [("front", front_analysis), ("back", back_analysis)]:
+        opencv_grade = analysis.get("opencv_corner_grade")
+        if opencv_grade is None:
+            continue
+        keys = [f"{side}_{c}" for c in ("top_left", "top_right", "bottom_left", "bottom_right")]
+        vision_scores = [
+            float(vision["corners"][k].get("score", 5.0))
+            for k in keys if k in vision["corners"]
+        ]
+        if not vision_scores:
+            continue
+        vision_avg = sum(vision_scores) / len(vision_scores)
+        divergence = abs(vision_avg - opencv_grade)
+        if divergence > DIVERGE_THRESHOLD:
+            flags.append(f"corner_{side}_opencv_divergence_{divergence:.1f}")
+            for k in keys:
+                if k in vision["corners"]:
+                    orig = float(vision["corners"][k].get("confidence", 1.0))
+                    vision["corners"][k]["confidence"] = round(
+                        max(0.3, orig - CONFIDENCE_PENALTY), 3
+                    )
+
+    return vision, flags
 
 
 def combine_front_back_analysis(
@@ -406,6 +459,13 @@ def combine_front_back_analysis(
     }
     centering_result = _build_centering_result(front_centering, back_centering)
 
+    # OpenCV corner cross-check: reduce confidence when Vision AI and OpenCV diverge > 2.0
+    vision_result, opencv_flags = _apply_opencv_corner_cross_check(
+        vision_result, front_analysis, back_analysis
+    )
+    if opencv_flags:
+        combined["warnings"].extend(opencv_flags)
+
     # Stage 4: Grade assembly
     inputs = _vision_to_assembly_input(vision_result, centering_result)
     assembler_out = assemble_grade(inputs)
@@ -453,11 +513,15 @@ def grade_card_session(
                 "centering_score": 5.0,
                 "confidence": 0.3,
             }
+            _front_score = float(centering_data.get("centering_score", 5.0))
+            _front_avg   = float(centering_data.get("centering_avg_score", _front_score))
             centering_result = CenteringResult(
                 centering_cap=centering_data.get("centering_cap", 10),
-                front_centering_score=float(centering_data.get("centering_score", 5.0)),
-                back_centering_score=float(centering_data.get("centering_score", 5.0)),
+                front_centering_score=_front_score,
+                back_centering_score=_front_score,
                 confidence=float(centering_data.get("confidence", 0.3)),
+                front_avg_centering_score=_front_avg,
+                back_avg_centering_score=_front_avg,
             )
             inputs = _vision_to_assembly_input(vision_result, centering_result)
             assembler_out = assemble_grade(inputs)

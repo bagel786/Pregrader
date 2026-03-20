@@ -124,9 +124,4 @@ class ApiClient {
       throw Exception("Result Error: $e");
     }
   }
-
-  /// Gets debug visualization URL (optional)
-  String getDebugVisualizationUrl(String sessionId) {
-    return "$_baseUrl/api/debug/$sessionId/visualization";
-  }
 }

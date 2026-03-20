@@ -103,6 +103,9 @@ async def upload_front_image(
                 enhanced = analyze_corners_enhanced(corrected_img, side="front")
                 enhanced_confidence = (enhanced or {}).get("confidence", 0.0)
                 basic_grade = (front_analysis.get("corners") or {}).get("overall_grade", 5.0)
+                # Always store the OpenCV grade for Vision AI cross-check in combine step,
+                # even when confidence is too low to replace the Vision AI scores outright.
+                front_analysis["opencv_corner_grade"] = (enhanced or {}).get("overall_grade")
                 if enhanced_confidence >= 0.7:
                     front_analysis["corners"] = enhanced
                     logger.info(
@@ -240,6 +243,8 @@ async def upload_back_image(
                 enhanced = analyze_corners_enhanced(detection["corrected_image"], side="back")
                 enhanced_confidence = (enhanced or {}).get("confidence", 0.0)
                 basic_grade = (back_analysis.get("corners") or {}).get("overall_grade", 5.0)
+                # Always store the OpenCV grade for Vision AI cross-check in combine step.
+                back_analysis["opencv_corner_grade"] = (enhanced or {}).get("overall_grade")
                 if enhanced_confidence >= 0.7:
                     back_analysis["corners"] = enhanced
                     logger.info(

@@ -90,11 +90,4 @@ class ImageValidator {
       };
     }
   }
-
-  /// Quick check for real-time camera preview feedback (lenient).
-  static bool quickCardCheck(int width, int height) {
-    double aspectRatio = width / height;
-    if (aspectRatio > 1.0) aspectRatio = 1 / aspectRatio;
-    return aspectRatio >= 0.62 && aspectRatio <= 0.80;
-  }
 }
