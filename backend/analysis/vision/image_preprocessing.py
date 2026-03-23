@@ -221,37 +221,16 @@ def get_card_corners(contour: np.ndarray) -> np.ndarray:
         points = cv2.boxPoints(rect)
     
     # Sort corners: top-left, top-right, bottom-right, bottom-left
+    # Using sum/diff approach — robust against axis-aligned corners
     points = points.astype(np.float32)
-    
-    # Logic to sort points order effectively
-    # Top-left has smallest sum (x+y)
-    # Bottom-right has largest sum
-    # Top-right has smallest difference (y-x) or largest (x-y)
-    # Bottom-left has largest difference... 
-    
-    # Alternative robust sorting:
-    center = points.mean(axis=0)
     sorted_points = np.zeros((4, 2), dtype=np.float32)
-    
-    for p in points:
-        if p[0] < center[0] and p[1] < center[1]:
-            sorted_points[0] = p # TL
-        elif p[0] > center[0] and p[1] < center[1]:
-            sorted_points[1] = p # TR
-        elif p[0] > center[0] and p[1] > center[1]:
-            sorted_points[2] = p # BR
-        elif p[0] < center[0] and p[1] > center[1]:
-            sorted_points[3] = p # BL
-            
-    # Fallback to simple sum sort if bounding box aligned
-    if np.all(sorted_points == 0):
-         s = points.sum(axis=1)
-         d = np.diff(points, axis=1)
-         sorted_points[0] = points[np.argmin(s)]
-         sorted_points[2] = points[np.argmax(s)]
-         sorted_points[1] = points[np.argmin(d)]
-         sorted_points[3] = points[np.argmax(d)]
-            
+    s = points.sum(axis=1)
+    d = np.diff(points, axis=1)
+    sorted_points[0] = points[np.argmin(s)]   # TL: smallest x+y
+    sorted_points[2] = points[np.argmax(s)]   # BR: largest x+y
+    sorted_points[1] = points[np.argmin(d)]   # TR: smallest y-x
+    sorted_points[3] = points[np.argmax(d)]   # BL: largest y-x
+
     return sorted_points
 
 

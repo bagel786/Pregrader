@@ -58,12 +58,12 @@ async def upload_front_image(
             f"warnings={quality_result.get('warnings', [])}"
         )
 
-        if not quality_result.get("valid", True):
+        if not quality_result.get("can_analyze", True):
             front_path.unlink(missing_ok=True)
             raise HTTPException(
                 status_code=400,
                 detail={
-                    "error": "Image could not be loaded",
+                    "error": "Image quality too poor for accurate grading",
                     "issues": quality_result.get("issues", []),
                     "user_feedback": quality_result.get("user_feedback", ["Please retake the photo"]),
                 },
@@ -204,12 +204,12 @@ async def upload_back_image(
             f"warnings={quality_result.get('warnings', [])}"
         )
 
-        if not quality_result.get("valid", True):
+        if not quality_result.get("can_analyze", True):
             back_path.unlink(missing_ok=True)
             raise HTTPException(
                 status_code=400,
                 detail={
-                    "error": "Back image could not be loaded",
+                    "error": "Image quality too poor for accurate grading",
                     "issues": quality_result.get("issues", []),
                     "user_feedback": quality_result.get("user_feedback", ["Please retake the photo"]),
                 },

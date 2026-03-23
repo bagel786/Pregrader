@@ -224,7 +224,17 @@ Important:
         # Extract border_fractions if the model returned them
         border_fractions = llm_result.get("border_fractions")
 
-        ai_corners = np.array(llm_result["corners"], dtype=np.float32)
+        corners = llm_result.get("corners", [])
+        if not corners or len(corners) != 4:
+            return {
+                "llm_result": llm_result,
+                "final_corners": None,
+                "confidence": 0.0,
+                "method": "failed",
+                "border_fractions": border_fractions,
+            }
+
+        ai_corners = np.array(corners, dtype=np.float32)
 
         # Step 2: Refine with OpenCV
         refined_corners = self._refine_corners_with_opencv(image_path, ai_corners)

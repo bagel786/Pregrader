@@ -138,11 +138,11 @@ def detect_inner_artwork_box(image: np.ndarray) -> Optional[np.ndarray]:
         
         x, y, w, h = cv2.boundingRect(cnt)
         
-        # Relaxed: artwork can be anywhere (modern cards have varied layouts)
-        # Just ensure it's not at the very edge
+        # Exclude contours touching any card edge — likely the card boundary itself
         margin = 0.05
-        if x < img_width * margin and y < img_height * margin:
-            continue  # Too close to top-left corner — probably the card itself
+        if (x < img_width * margin or y < img_height * margin or
+                x + w > img_width * (1 - margin) or y + h > img_height * (1 - margin)):
+            continue
         
         # Should have reasonable aspect ratio for a card element
         aspect = w / h

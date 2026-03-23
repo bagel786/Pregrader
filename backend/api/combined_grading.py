@@ -12,7 +12,7 @@ import logging
 from typing import Dict, List, Optional, Tuple
 from pathlib import Path
 
-from analysis.centering import calculate_centering_ratios
+from analysis.centering import calculate_centering_ratios, _centering_cap_and_score
 from grading.vision_assessor import assess_card, VisionAssessorError
 from grading.grade_assembler import (
     assemble_grade,
@@ -482,77 +482,3 @@ def combine_front_back_analysis(
     combined["surface"] = surface_out
 
     return combined
-
-
-def grade_card_session(
-    front_path: str,
-    back_path: Optional[str] = None,
-    debug_output_dir: Optional[Path] = None,
-) -> Tuple[Dict, Dict]:
-    """
-    Grade a card with front and optional back image.
-
-    Returns:
-        Tuple of (combined_result, individual_sides_dict)
-    """
-    front_analysis = analyze_single_side(front_path, "front", debug_output_dir)
-
-    if back_path:
-        back_analysis = analyze_single_side(back_path, "back", debug_output_dir)
-        combined = combine_front_back_analysis(front_analysis, back_analysis)
-    else:
-        # Front-only: run vision assessor with front image as both sides.
-        # Centering uses front cap table for both (conservative default).
-        try:
-            front_img = cv2.imread(front_path)
-            if front_img is None:
-                raise VisionAssessorError("Could not load front image")
-            vision_result = assess_card(front_img, front_img)
-            centering_data = front_analysis.get("centering") or {
-                "centering_cap": 10,
-                "centering_score": 5.0,
-                "confidence": 0.3,
-            }
-            _front_score = float(centering_data.get("centering_score", 5.0))
-            _front_avg   = float(centering_data.get("centering_avg_score", _front_score))
-            centering_result = CenteringResult(
-                centering_cap=centering_data.get("centering_cap", 10),
-                front_centering_score=_front_score,
-                back_centering_score=_front_score,
-                confidence=float(centering_data.get("confidence", 0.3)),
-                front_avg_centering_score=_front_avg,
-                back_avg_centering_score=_front_avg,
-            )
-            inputs = _vision_to_assembly_input(vision_result, centering_result)
-            assembler_out = assemble_grade(inputs)
-            grade_out, corners_out, edges_out, surface_out = _assemble_result_to_compat(
-                assembler_out, vision_result
-            )
-            combined = {
-                "analysis_type": "front_only",
-                "centering": centering_data,
-                "corners": corners_out,
-                "edges": edges_out,
-                "surface": surface_out,
-                "grade": grade_out,
-                "warnings": ["Back not provided — front-only analysis (back side duplicated)"],
-            }
-        except VisionAssessorError as exc:
-            combined = {
-                "analysis_type": "front_only",
-                "centering": front_analysis.get("centering"),
-                "corners": None,
-                "edges": None,
-                "surface": None,
-                "grade": {"error": str(exc), "psa_estimate": "?", "final_score": 0},
-                "warnings": [f"Vision AI assessment failed: {exc}"],
-            }
-
-        back_analysis = None
-
-    individual = {
-        "front": front_analysis,
-        "back": back_analysis,
-    }
-
-    return combined, individual

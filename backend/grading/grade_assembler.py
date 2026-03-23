@@ -281,7 +281,7 @@ def _collect_defects(
     edge_defects: Dict[str, List[str]],
     surface_defects: Dict[str, List[str]],
 ) -> List[Dict]:
-    """Build unified defect list for output. Only include locations scoring below 9.5."""
+    """Build unified defect list for output. Only include locations scoring below 8.5."""
     result = []
 
     corner_score_map = {
@@ -295,7 +295,7 @@ def _collect_defects(
         "back_bottom_right": corners.back_bottom_right,
     }
     for loc, score in corner_score_map.items():
-        if score < 9.5:
+        if score < 8.5:
             defects = corner_defects.get(loc, [])
             desc = ", ".join(defects) if defects else "wear detected"
             result.append({
@@ -315,7 +315,7 @@ def _collect_defects(
         "back_left": edges.back_left,
     }
     for loc, score in edge_score_map.items():
-        if score < 9.5:
+        if score < 8.5:
             defects = edge_defects.get(loc, [])
             desc = ", ".join(defects) if defects else "wear detected"
             result.append({
@@ -326,7 +326,7 @@ def _collect_defects(
 
     for side in ("front", "back"):
         score = surface.front if side == "front" else surface.back
-        if score < 9.5:
+        if score < 8.5:
             defects = surface_defects.get(side, [])
             desc = ", ".join(defects) if defects else "surface wear"
             result.append({

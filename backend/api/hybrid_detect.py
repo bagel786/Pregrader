@@ -13,6 +13,7 @@ import json
 import time
 import asyncio
 import logging
+import threading
 import numpy as np
 from typing import Dict, Optional
 from pathlib import Path
@@ -42,6 +43,7 @@ _detection_stats = {
     "failures": 0,
     "total_time_ms": 0,
 }
+_stats_lock = threading.Lock()
 
 
 # ============================================================================
@@ -379,10 +381,11 @@ async def _try_ai_fallback(image_path: str, session_id: str) -> Dict:
 # ============================================================================
 
 def _record_stat(method: str):
-    _detection_stats["total"] += 1
-    if method.startswith("opencv"):
-        _detection_stats["opencv_success"] += 1
-    elif method == "hybrid_ai":
-        _detection_stats["ai_success"] += 1
-    else:
-        _detection_stats["failures"] += 1
+    with _stats_lock:
+        _detection_stats["total"] += 1
+        if method.startswith("opencv"):
+            _detection_stats["opencv_success"] += 1
+        elif method == "hybrid_ai":
+            _detection_stats["ai_success"] += 1
+        else:
+            _detection_stats["failures"] += 1

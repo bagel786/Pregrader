@@ -20,7 +20,7 @@ async def start_grading_session():
         Session ID and status for tracking the grading process
     """
     try:
-        session = get_session_manager().create_session()
+        session = await get_session_manager().create_session()
         logger.info(f"Started new grading session: {session.session_id}")
         return {
             "session_id": session.session_id,
@@ -36,7 +36,7 @@ async def start_grading_session():
 @router.delete("/{session_id}")
 async def delete_grading_session(session_id: str):
     """Delete a grading session and clean up files."""
-    success = get_session_manager().delete_session(session_id)
+    success = await get_session_manager().delete_session(session_id)
     if not success:
         raise HTTPException(status_code=404, detail="Session not found")
     return {"status": "deleted", "session_id": session_id}
