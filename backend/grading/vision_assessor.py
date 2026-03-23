@@ -255,14 +255,26 @@ def _build_message_content(images: List[Dict]) -> List[Dict]:
                 "data": img_info["b64"],
             },
         })
+    if COMPOSITE_MODE:
+        layout_desc = (
+            "Images are in order: front corners grid, back corners grid, "
+            "front edges composite, back edges composite, "
+            "full front surface, full back surface."
+        )
+    else:
+        layout_desc = (
+            "Images are in order: 4 front corner crops (TL, TR, BL, BR), "
+            "4 back corner crops (TL, TR, BL, BR), "
+            "4 front edge strips (top, right, bottom, left), "
+            "4 back edge strips (top, right, bottom, left), "
+            "full front surface, full back surface."
+        )
     content.append({
         "type": "text",
         "text": (
-            "Assess the card condition shown in these images. "
-            "Images are in order: front corners grid, back corners grid, "
-            "front edges composite, back edges composite, "
-            "full front surface, full back surface. "
-            "Return only JSON as specified in your instructions."
+            f"Assess the card condition shown in these images. "
+            f"{layout_desc} "
+            f"Return only JSON as specified in your instructions."
         ),
     })
     return content

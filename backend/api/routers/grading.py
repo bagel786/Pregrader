@@ -130,6 +130,8 @@ async def upload_front_image(
             session_id,
             front_image_path=str(front_path),
             front_analysis=front_analysis,
+            back_analysis=None,
+            combined_grade=None,
             status="front_uploaded",
         )
 

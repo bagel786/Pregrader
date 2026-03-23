@@ -430,6 +430,15 @@ def combine_front_back_analysis(
         combined["warnings"].append("Image load failed")
         return combined
 
+    # Check for possible front/back swap
+    detected_front = front_analysis.get("detected_as")
+    detected_back = back_analysis.get("detected_as")
+    if detected_front == "back" and detected_back == "front":
+        combined["warnings"].append(
+            "Images may have been uploaded in the wrong order "
+            "(front detected as back, back detected as front)"
+        )
+
     # Stage 3: Vision AI assessment
     try:
         vision_result = assess_card(front_img, back_img)

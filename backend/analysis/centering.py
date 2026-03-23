@@ -490,7 +490,7 @@ def calculate_centering_score(
     elif avg_ratio >= 0.93:
         return 9.0 + (avg_ratio - 0.93) / 0.045
     elif avg_ratio >= 0.90:
-        return 8.0 + (avg_ratio - 0.90) / 0.05
+        return 8.0 + (avg_ratio - 0.90) / 0.03
     elif avg_ratio >= 0.85:
         return 7.0 + (avg_ratio - 0.85) / 0.05
     elif avg_ratio >= 0.75:
