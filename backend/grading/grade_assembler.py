@@ -480,6 +480,7 @@ def assemble_grade(inputs: AssemblyInput) -> Dict:
         },
         "confidence": {
             "overall": overall_conf,
+            "level": "High" if overall_conf >= 0.75 else "Medium" if overall_conf >= 0.55 else "Low",
             "low_confidence_flags": low_conf_flags,
         },
     }

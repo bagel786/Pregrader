@@ -144,6 +144,20 @@ async def health_check():
 # =============================================================================
 
 @app.on_event("startup")
+async def run_startup_checks():
+    """Validate critical dependencies at server startup."""
+    from startup_check import check_api_key, check_grading_prompt
+    if not check_api_key():
+        logger.error("ANTHROPIC_API_KEY missing — grading will fail on first request")
+    if not check_grading_prompt():
+        logger.error("grading_prompt.txt missing or empty — grading will fail on first request")
+    logger.warning(
+        "NOTICE: Grading system has NOT been calibrated against professional "
+        "PSA/BGS grades. All grades are AI estimates for informational purposes only."
+    )
+
+
+@app.on_event("startup")
 async def start_session_cleanup():
     """Periodic cleanup of expired sessions to prevent memory leaks."""
     async def cleanup_loop():

@@ -408,8 +408,53 @@ _CREASE_ORDER    = ["none", "hairline", "moderate", "heavy"]
 _WHITENING_ORDER = ["none", "minor", "moderate", "extensive"]
 
 
+_CREASE_SYNONYMS = {
+    "light": "hairline",
+    "slight": "hairline",
+    "minor": "hairline",
+    "severe": "heavy",
+    "deep": "heavy",
+    "significant": "moderate",
+}
+
+_WHITENING_SYNONYMS = {
+    "light": "minor",
+    "slight": "minor",
+    "small": "minor",
+    "severe": "extensive",
+    "large": "extensive",
+    "significant": "moderate",
+}
+
+
+def _normalize_label(label: Optional[str], order: list) -> Optional[str]:
+    """Normalize a damage label, mapping context-specific synonyms and warning on unknowns."""
+    if label is None:
+        return None
+    if label in order:
+        return label
+    # Select synonym table based on which order list we're checking against
+    if order is _CREASE_ORDER:
+        synonyms = _CREASE_SYNONYMS
+    elif order is _WHITENING_ORDER:
+        synonyms = _WHITENING_SYNONYMS
+    else:
+        synonyms = {}
+    mapped = synonyms.get(label.lower())
+    if mapped and mapped in order:
+        logger.warning(f"Mapped non-standard damage label '{label}' → '{mapped}'")
+        return mapped
+    # Unknown label: default to most severe to avoid under-penalizing
+    logger.warning(
+        f"Unknown damage label '{label}' not in {order} — defaulting to most severe ('{order[-1]}')"
+    )
+    return order[-1]
+
+
 def _most_severe(a: Optional[str], b: Optional[str], order: list) -> Optional[str]:
     """Return the more severe of two categorical labels, or None if both absent."""
+    a = _normalize_label(a, order)
+    b = _normalize_label(b, order)
     ia = order.index(a) if a in order else -1
     ib = order.index(b) if b in order else -1
     if ia < 0 and ib < 0:
@@ -419,7 +464,8 @@ def _most_severe(a: Optional[str], b: Optional[str], order: list) -> Optional[st
 
 def _most_severe_of_three(a: Optional[str], b: Optional[str], c: Optional[str], order: list) -> Optional[str]:
     """Return the most severe of three categorical labels, or None if all absent."""
-    ranked = [order.index(x) for x in (a, b, c) if x in order]
+    normalized = [_normalize_label(x, order) for x in (a, b, c)]
+    ranked = [order.index(x) for x in normalized if x in order]
     return order[max(ranked)] if ranked else None
 
 
@@ -641,6 +687,12 @@ def assess_card(
     key = api_key or os.getenv("ANTHROPIC_API_KEY")
     if not key:
         raise VisionAssessorError("ANTHROPIC_API_KEY not set")
+
+    if not SYSTEM_PROMPT:
+        raise VisionAssessorError(
+            f"Grading prompt not loaded (expected at {_PROMPT_PATH}). "
+            "Cannot produce reliable grades without the system prompt."
+        )
 
     images = prepare_images(front_img, back_img)
 

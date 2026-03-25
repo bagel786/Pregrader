@@ -87,10 +87,13 @@ class _ReviewScreenState extends State<ReviewScreen> {
 
       // Step 3: Upload back image
       _setStep(3);
-      await client.uploadBackImage(
+      final backResult = await client.uploadBackImage(
         sessionId: sessionId,
         backImage: _backFile!,
       );
+      if (backResult['status'] == 'error') {
+        throw Exception(backResult['error'] ?? backResult['message'] ?? 'Grading failed');
+      }
 
       // Step 4: Analyze
       _setStep(4);

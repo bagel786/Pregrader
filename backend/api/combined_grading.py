@@ -12,7 +12,7 @@ import logging
 from typing import Dict, List, Optional, Tuple
 from pathlib import Path
 
-from analysis.centering import calculate_centering_ratios, _centering_cap_and_score
+from analysis.centering import calculate_centering_ratios
 from grading.vision_assessor import assess_card, VisionAssessorError
 from grading.grade_assembler import (
     assemble_grade,
@@ -29,7 +29,9 @@ logger = logging.getLogger(__name__)
 def detect_card_side(image: np.ndarray) -> Tuple[str, float]:
     """
     Detect if image shows card front or back based on blue hue dominance.
-    Pokemon backs have >40% blue pixels; fronts have varied colors.
+    Pokemon backs have heavy blue with a specific red Pokeball center.
+    Threshold raised from 40% to 55% to avoid false positives on blue-artwork
+    fronts (Articuno, Vaporeon, Blastoise, water-type cards).
     (Inlined from analysis/deprecated/edges.py to remove dependency on deprecated module.)
     """
     hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
@@ -37,9 +39,14 @@ def detect_card_side(image: np.ndarray) -> Tuple[str, float]:
     blue_pct = cv2.countNonZero(blue_mask) / blue_mask.size * 100
     yellow_mask = cv2.inRange(hsv, np.array([20, 80, 100]), np.array([40, 255, 255]))
     yellow_pct = cv2.countNonZero(yellow_mask) / yellow_mask.size * 100
+    # Red mask for Pokeball detection (backs have a red Pokeball center)
+    red_mask1 = cv2.inRange(hsv, np.array([0, 80, 80]), np.array([10, 255, 255]))
+    red_mask2 = cv2.inRange(hsv, np.array([160, 80, 80]), np.array([180, 255, 255]))
+    red_pct = (cv2.countNonZero(red_mask1) + cv2.countNonZero(red_mask2)) / blue_mask.size * 100
 
-    if blue_pct > 40 and yellow_pct < 5:
-        return "back", min(1.0, blue_pct / 60)
+    # Backs require both high blue AND some red (Pokeball) — reduces false positives
+    if blue_pct > 55 and yellow_pct < 5 and red_pct > 2:
+        return "back", min(1.0, blue_pct / 70)
     if blue_pct < 20:
         return "front", min(1.0, (100 - blue_pct) / 80)
     return "front", 0.6
@@ -227,7 +234,14 @@ def _assemble_result_to_compat(assembler_result: Dict, vision: Dict) -> Dict:
 
     # Add backward-compat fields to the grade dict
     grade_out = dict(assembler_result)
-    grade_out["psa_estimate"] = _psa_label(final_grade)
+    grade_out["estimated_grade"] = _psa_label(final_grade)
+    grade_out["psa_estimate"] = grade_out["estimated_grade"]  # backward compat alias
+    grade_out["is_estimate"] = True
+    grade_out["disclaimer"] = (
+        "This is an AI-generated estimate, not an official PSA grade. "
+        "Actual professional grades may differ. This tool is for "
+        "informational purposes only."
+    )
     grade_out["final_score"] = assembler_result["composite_score"]
     grade_out["grading_status"] = "success"
 
@@ -245,8 +259,11 @@ def _assemble_result_to_compat(assembler_result: Dict, vision: Dict) -> Dict:
     # into the higher grade band. 0.3 avoids showing ranges on clear mid-grade cards
     # while alerting on genuine boundary cases.
     _GRADE_BRACKETS = [
-        (9.5, "10"), (9.0, "9"), (8.0, "8"), (7.0, "7"), (6.0, "6"),
-        (5.0, "5"), (4.0, "4"), (3.0, "3"), (2.0, "2"), (1.0, "1"),
+        (9.5, "10"), (9.0, "9"), (8.5, "8.5"), (8.0, "8"),
+        (7.5, "7.5"), (7.0, "7"), (6.5, "6.5"), (6.0, "6"),
+        (5.5, "5.5"), (5.0, "5"), (4.5, "4.5"), (4.0, "4"),
+        (3.5, "3.5"), (3.0, "3"), (2.5, "2.5"), (2.0, "2"),
+        (1.5, "1.5"), (1.0, "1"),
     ]
     psa_label = grade_out["psa_estimate"]
     composite = assembler_result["composite_score"]
@@ -485,7 +502,16 @@ def combine_front_back_analysis(
     )
 
     combined["grade"] = grade_out
-    combined["centering"] = front_centering  # keep original centering data for details
+    # Show the worse centering side in the primary field (drives the cap),
+    # and expose both sides for the detail screen.
+    front_cap = front_centering.get("centering_cap", 10)
+    back_cap = back_centering.get("centering_cap", 10)
+    if back_cap < front_cap:
+        combined["centering"] = back_centering
+    else:
+        combined["centering"] = front_centering
+    combined["front_centering"] = front_centering
+    combined["back_centering"] = back_centering
     combined["corners"] = corners_out
     combined["edges"] = edges_out
     combined["surface"] = surface_out

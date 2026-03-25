@@ -1,6 +1,7 @@
 """
 Grading workflow routes: upload front/back images and retrieve results.
 """
+import asyncio
 import time
 import logging
 import cv2
@@ -262,7 +263,31 @@ async def upload_back_image(
                 logger.warning(f"[{session_id}] Enhanced back corners failed, keeping basic: {e}")
 
         logger.info(f"[{session_id}] Combining front and back analysis")
-        combined_grade = combine_front_back_analysis(session.front_analysis, back_analysis)
+        combined_grade = await asyncio.to_thread(
+            combine_front_back_analysis, session.front_analysis, back_analysis
+        )
+
+        # Check if grading failed (Vision AI error produces error dict, not exception)
+        grade_error = combined_grade.get("grade", {}).get("error")
+        if grade_error:
+            logger.error(f"[{session_id}] Grading failed: {grade_error}")
+            session_manager.update_session(
+                session_id,
+                back_image_path=str(back_path),
+                back_analysis=back_analysis,
+                combined_grade=combined_grade,
+                status="error",
+                error_message=grade_error,
+            )
+            total_time = time.time() - start_time
+            return {
+                "session_id": session_id,
+                "status": "error",
+                "error": grade_error,
+                "warnings": combined_grade.get("warnings", []),
+                "processing_time": f"{total_time:.2f}s",
+                "message": "Grading could not be completed. Please try again.",
+            }
 
         session_manager.update_session(
             session_id,
