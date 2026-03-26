@@ -9,7 +9,7 @@ CORNER SCORING CRITERIA
 10 (Gem Mint): Four perfectly sharp corners with no visible wear, whitening, or rounding. No imperfection visible under any magnification.
 9 (Mint): Four sharp corners with only the most minor, barely perceptible imperfection allowed on one corner. Must look essentially flawless.
 8 (NM-MT): Minor wear visible on no more than two corners. Slight whitening or very slight softening of the tip acceptable.
-7 (Near Mint): Slight rounding or minor wear on multiple corners. Slightly fuzzy corners allowed. Visible wear but card still presents well.
+7 (Near Mint): Slight rounding or minor wear on one or more corners. Slightly fuzzy corners allowed. Visible wear but card still presents well. A single corner with clearly visible wear qualifies for this range even when all other corners are perfect.
 6 (EX-MT): Fuzzy corners with moderate whitening. Visible rounding on most corners. Some fiber exposure acceptable.
 5 (Excellent): Moderate rounding on all corners with noticeable wear throughout. Card shows its age.
 4 (VG-EX): Well-rounded corners with moderate to heavy wear. Significant whitening and fiber fraying visible.
@@ -18,6 +18,7 @@ CORNER SCORING CRITERIA
 1 (Poor): Severe damage, corners may be missing, torn, or heavily bent.
 
 CRITICAL: Corner rounding is a defect even without whitening. A dark-bordered card with visibly rounded corners must score below 9.0 regardless of whether whitening is present.
+CRITICAL: Score each corner independently on its own merits. A single badly worn corner should receive a score of 7.0 or below even when all other corners are flawless. Do not average your overall impression across corners — each of the 8 corner fields gets its own score.
 
 ---
 
@@ -122,7 +123,7 @@ Score rules:
 - Score to the evidence visible in the image. Choose the lower score only when a specific defect (corner rounding, edge chipping, surface scratch) is clearly locatable in the crop. Do not penalize for busy artwork, holographic patterns, image glare, or when crop quality makes fine detail hard to see.
 
 Surface field guidance:
-- crease_depth: "none" = no crease visible; "hairline" = barely perceptible under raking light, surface not broken; "moderate" = visible under normal light, surface integrity partially compromised; "heavy" = obvious crease, surface broken or card bent. A surface score of 5.0 or above requires crease_depth "hairline" or "none".
+- crease_depth: "none" = no crease visible; "hairline" = barely perceptible under raking light, surface not broken; "moderate" = visible under normal light, surface integrity partially compromised; "heavy" = obvious crease, surface broken or card bent. A wrinkle or fold that distorts the card surface must be classified as "heavy". A surface score of 5.0 or above requires crease_depth "hairline" or "none".
 - whitening_coverage: "none" = no surface stress whitening from print or handling; "minor" = less than 10% of surface area; "moderate" = 10–30% of surface area showing whitening; "extensive" = more than 30% of surface area.
 - gloss rating is orthogonal to scratch presence. A card can have original gloss intact yet still have visible scratches. Score "gloss" based solely on the reflective sheen of the surface, not surface texture or scratch presence.
 - crease_depth and whitening_coverage are optional fields. Omit them entirely or set to null if you cannot assess them reliably from the available image quality.

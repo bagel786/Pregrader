@@ -188,7 +188,7 @@ def _apply_damage_cap(
     Only activated when surface confidence >= 0.60 for that side.
 
     Cap rules (either side triggers):
-      heavy crease     → cap at 3.0
+      heavy crease     → cap at 2.0
       moderate crease  → cap at 5.0
       extensive whitening → cap at 5.0
 
@@ -204,6 +204,8 @@ def _apply_damage_cap(
 
     for side in ("front", "back"):
         data = surface_raw.get(side, {})
+        if not isinstance(data, dict):
+            continue  # Unexpected type, skip this side
         if surface_confidences.get(side, 0.0) < 0.60:
             continue  # Not confident enough in this side's damage detection
 
@@ -211,8 +213,8 @@ def _apply_damage_cap(
         whitening = data.get("whitening_coverage")
 
         if crease and CREASE_ORDER.get(crease, 0) >= 3:     # heavy
-            if cap is None or cap > 3.0:
-                cap = 3.0
+            if cap is None or cap > 2.0:
+                cap = 2.0
                 reason = f"heavy crease on {side} surface"
         elif crease and CREASE_ORDER.get(crease, 0) >= 2:   # moderate
             if cap is None or cap > 5.0:
@@ -388,7 +390,7 @@ def assemble_grade(inputs: AssemblyInput) -> Dict:
         composite, corners_blended, edges_blended, surface_blended
     )
 
-    # 3.5. Damage cap — must come before centering cap so that e.g. a heavy crease (cap=3)
+    # 3.5. Damage cap — must come before centering cap so that e.g. a heavy crease (cap=2.0)
     # always wins over a loose centering cap (e.g. cap=6).
     composite, damage_cap_act, damage_cap_reason = _apply_damage_cap(
         composite, inputs.surface_raw, inputs.surface_confidences

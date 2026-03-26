@@ -321,10 +321,10 @@ def _validate_response(data: Dict) -> None:
         if score is None or not (1.0 <= float(score) <= 10.0):
             raise ValueError(f"Surface {side} score out of range: {score}")
 
-    # Hallucination guard: all 8 corners identical AND equal to an obvious placeholder value
+    # Hallucination guard: all 8 corners identical indicates likely hallucinated output
     corner_scores = [float(data["corners"][k]["score"]) for k in required_corners]
-    if len(set(corner_scores)) == 1 and corner_scores[0] in (1.0, 5.0, 10.0):
-        raise ValueError("All corner scores are identical placeholder value — likely hallucinated output")
+    if len(set(corner_scores)) == 1:
+        raise ValueError(f"All 8 corner scores are identical ({corner_scores[0]}) — likely hallucinated output")
 
 
 def _call_api_sync(images: List[Dict], api_key: str) -> Dict:
@@ -415,6 +415,7 @@ _CREASE_SYNONYMS = {
     "severe": "heavy",
     "deep": "heavy",
     "significant": "moderate",
+    "wrinkle": "heavy",    # TAG label: "SURFACE / WRINKLE/CREASE" → heavy crease
 }
 
 _WHITENING_SYNONYMS = {
