@@ -13,6 +13,7 @@ from typing import Dict, List, Optional, Tuple
 from pathlib import Path
 
 from analysis.centering import calculate_centering_ratios
+from analysis.damage_preprocessing import enhance_for_damage_detection
 from grading.vision_assessor import assess_card, assess_damage_from_full_images, VisionAssessorError
 from grading.grade_assembler import (
     assemble_grade,
@@ -507,18 +508,46 @@ def combine_front_back_analysis(
         logger.warning(f"Damage assessment failed (non-critical): {exc}")
         # Don't fail the entire grading, but log the issue
 
-    # Stage 3c: DISABLED — HoughLinesP crease detection (Mar 27)
-    # REASON: False positive rate too high. Near-mint cards flagged as heavy creases due to
-    # artwork/holographic pattern edges being indistinguishable from actual crease lines.
-    # HoughLinesP cannot distinguish artwork diagonals from damage creases.
-    # Reverted to Vision AI detection only until a better algorithm is implemented
-    # (ML-based crease detection or texture/curvature analysis).
-    #
-    # Kept creases.py for future reference; can be re-enabled with improved filtering:
-    # - Require minimum line separation (creases don't cluster)
-    # - Filter by line prominence/darkness (creases darker than artwork)
-    # - Require lines to span card edge-to-edge (not local segments)
-    # - Template matching against known crease patterns
+    # Stage 3c: Enhanced damage assessment on preprocessed images (upgrade-only)
+    # Removes holographic foil noise via split-region grayscale+CLAHE preprocessing,
+    # then re-assesses with Vision AI. Only upgrades damage severity, never downgrades.
+    # Avoids artwork-edge false positives by using mild CLAHE in art interior.
+    _WH_ORDER = ["none", "minor", "moderate", "extensive"]
+    try:
+        front_enhanced = enhance_for_damage_detection(front_img)
+        back_enhanced = enhance_for_damage_detection(back_img) if back_img is not None else None
+        enhanced_damage = assess_damage_from_full_images(front_enhanced, back_enhanced)
+
+        for side in ["front", "back"]:
+            if side not in vision_result.get("surface", {}):
+                continue
+            enh = enhanced_damage.get(side, {})
+            enh_crease = enh.get("crease_depth", "none")
+            enh_white = enh.get("whitening_coverage", "none")
+            cur_crease = vision_result["surface"][side].get("crease_depth", "none")
+            cur_white = vision_result["surface"][side].get("whitening_coverage", "none")
+
+            # Upgrade crease if enhanced detection found worse severity
+            if _CREASE_SEVERITY_ORDER.index(enh_crease) > _CREASE_SEVERITY_ORDER.index(cur_crease):
+                vision_result["surface"][side]["crease_depth"] = enh_crease
+                # Floor confidence to ensure damage cap gate (0.60) is met
+                vision_result["surface"][side]["confidence"] = max(
+                    float(vision_result["surface"][side].get("confidence", 0.0)), 0.65
+                )
+                logger.info(
+                    f"[Stage 3c] Enhanced preprocessing upgraded {side} crease: "
+                    f"'{cur_crease}' → '{enh_crease}'"
+                )
+
+            # Upgrade whitening if enhanced detection found worse severity
+            if _WH_ORDER.index(enh_white) > _WH_ORDER.index(cur_white):
+                vision_result["surface"][side]["whitening_coverage"] = enh_white
+                logger.info(
+                    f"[Stage 3c] Enhanced preprocessing upgraded {side} whitening: "
+                    f"'{cur_white}' → '{enh_white}'"
+                )
+    except Exception as exc:
+        logger.warning(f"[Stage 3c] Enhanced damage assessment failed (non-critical): {exc}")
 
     # Stage 2: Build centering result from both sides
     front_centering = front_analysis.get("centering") or {
