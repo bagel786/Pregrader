@@ -1,0 +1,69 @@
+name: Build and Release APK
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.10.7'
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Decode keystore
+        run: |
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > android/app/pregrader.keystore
+
+      - name: Create key.properties
+        run: |
+          cat > android/key.properties << EOF
+          storePassword=${{ secrets.KEYSTORE_PASSWORD }}
+          keyPassword=${{ secrets.KEY_PASSWORD }}
+          keyAlias=${{ secrets.KEY_ALIAS }}
+          storeFile=android/app/pregrader.keystore
+          EOF
+
+      - name: Build APK
+        run: flutter build apk --release
+
+      - name: Get version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: build/app/outputs/flutter-apk/app-release.apk
+          body: |
+            # Pokemon Pregrader ${{ steps.version.outputs.VERSION }}
+
+            ## Installation
+            1. Download `app-release.apk` below
+            2. On your Android phone: Settings → Apps → Special app access → Install unknown apps → Select your file manager/browser and toggle ON
+            3. Open the APK file and tap "Install"
+            4. Launch "Pokemon Pregrader" from your app drawer
+
+            ## Requirements
+            - Android 7.0+ (API 24+)
+            - Camera permission required
+            - Internet connection required
+
+            **Note**: This is a pre-release version. For iOS, use TestFlight or wait for App Store distribution.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

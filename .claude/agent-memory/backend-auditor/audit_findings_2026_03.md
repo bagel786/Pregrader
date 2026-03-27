@@ -546,3 +546,61 @@ SYSTEM IS READY FOR PUBLICATION with the following accepted risks:
 
 Total bugs fixed across all 5 audit rounds: 16
 Remaining accepted issues: 7 (all warnings, none affect grade correctness)
+
+---
+
+## March 26 2026 Round-6 Audit
+
+### Focus: grade_assembler.py, vision_assessor.py, grading_prompt.txt (recent git changes)
+
+### No New Critical Bugs Found
+
+All previously documented critical bugs remain fixed. The grading algorithm, session management, blending logic, centering caps, damage caps, and half-point gate are all correctly implemented.
+
+### LOGIC-6 (NEW): _apply_damage_cap docstring and inline comment say cap=3.0 but code is 2.0
+
+- grade_assembler.py line 191: docstring says `heavy crease → cap at 3.0`
+- grade_assembler.py line 391: inline comment says `a heavy crease (cap=3)`
+- grade_assembler.py line 215: actual code is `cap = 2.0`
+- MEMORY.md confirms intentional calibration: "heavy crease now 2.0 (was 3.0) — calibrated against TAG report"
+- IMPACT: Documentation-only error. Code is correct. Docstring must be updated.
+- STATUS: NOT YET FIXED
+
+### WARN-NEW-1 (NEW): Hallucination guard only catches three placeholder values
+
+- vision_assessor.py line 326: `if len(set(corner_scores)) == 1 and corner_scores[0] in (1.0, 5.0, 10.0):`
+- All-identical non-placeholder values (e.g. all 9.0) pass the guard silently
+- Recommended fix: remove the `in (1.0, 5.0, 10.0)` condition — any 8-identical-corner response is suspicious
+- RISK: Low (rare hallucination pattern)
+
+### WARN-NEW-2 (NEW): _apply_damage_cap does not guard against surface_raw[side] being non-dict
+
+- grade_assembler.py line 206: `data = surface_raw.get(side, {})` then `data.get("crease_depth")`
+- If surface_raw[side] is somehow None/non-dict (malformed Vision AI response passing _validate_response), AttributeError
+- _validate_response validates score key existence but not that the entire surface dict is well-typed
+- RISK: Very low — prompt constrains output format
+
+### Verified Correct (Round-6 additions)
+
+- Composite weights 37.5/37.5/25: CORRECT
+- Blending 60/40, 65/35, 70/30 (front-weighted): CORRECT
+- Floor/ceiling bounds-guarded, centering excluded: CORRECT
+- Damage cap at 2.0 (heavy crease): CORRECT (code), docstring stale
+- Damage cap at 5.0 (moderate crease, extensive whitening): CORRECT
+- Centering cap gated on confidence >= 0.6: CORRECT
+- Pipeline order: CORRECT
+- Half-point gate uses avg-axis centering: CORRECT
+- grade_range logic for all PSA labels including half-points: CORRECT
+- _normalize_label None passthrough: CORRECT
+- Dual-pass / median-of-3 "most severe wins": CORRECT
+- startup_check.py now invoked via main.py @app.on_event("startup"): CORRECT
+- confidence["level"] key present in grade_assembler output: CORRECT
+- _SYNONYM_TABLES dead variable removed: CONFIRMED ABSENT
+- COMPOSITE_MODE=True layout description correct: CORRECT for current hardcoded mode
+
+### Updated Status
+
+Total bugs fixed: 16 (no new fixes this round)
+Remaining documentation error: 1 (LOGIC-6 — docstring says cap=3.0, code is 2.0)
+Remaining warnings: 9 total (WARN-2 through WARN-NEW-2)
+Production readiness: MAINTAINED — no grade-correctness issues found

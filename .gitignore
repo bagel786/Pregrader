@@ -47,3 +47,8 @@ app.*.map.json
 # Backend secrets
 backend/.env
 .env
+
+# Android signing keys (KEEP PRIVATE!)
+android/key.properties
+android/app/*.keystore
+android/app/*.jks
