@@ -13,7 +13,7 @@ from typing import Dict, List, Optional, Tuple
 from pathlib import Path
 
 from analysis.centering import calculate_centering_ratios
-from grading.vision_assessor import assess_card, VisionAssessorError
+from grading.vision_assessor import assess_card, assess_damage_from_full_images, VisionAssessorError
 from grading.grade_assembler import (
     assemble_grade,
     AssemblyInput,
@@ -471,6 +471,36 @@ def combine_front_back_analysis(
         }
         combined["warnings"].append(f"Vision AI assessment failed: {exc}")
         return combined
+
+    # Stage 3b: Damage assessment with full images (to catch damage missed in cropped analysis)
+    try:
+        damage_result = assess_damage_from_full_images(front_img, back_img)
+        # Merge damage assessment into vision results, using damage as override for severe cases
+        for side in ["front", "back"]:
+            if side in vision_result.get("surface", {}):
+                damage_side = damage_result.get(side, {})
+                damage_crease = damage_side.get("crease_depth", "none")
+                damage_whitening = damage_side.get("whitening_coverage", "none")
+
+                # If damage assessment found heavy/extensive damage, use it (more reliable on full images)
+                if damage_crease in ["heavy"]:
+                    vision_result["surface"][side]["crease_depth"] = damage_crease
+                    logger.info(f"Damage assessment upgraded {side} crease to '{damage_crease}'")
+                elif damage_crease in ["moderate"] and vision_result["surface"][side].get("crease_depth") == "none":
+                    # Also upgrade if cropped analysis missed moderate crease
+                    vision_result["surface"][side]["crease_depth"] = damage_crease
+                    logger.info(f"Damage assessment detected {side} crease as '{damage_crease}'")
+
+                if damage_whitening in ["extensive"]:
+                    vision_result["surface"][side]["whitening_coverage"] = damage_whitening
+                    logger.info(f"Damage assessment upgraded {side} whitening to '{damage_whitening}'")
+                elif damage_whitening in ["moderate"] and vision_result["surface"][side].get("whitening_coverage") in ["none", "minor"]:
+                    vision_result["surface"][side]["whitening_coverage"] = damage_whitening
+                    logger.info(f"Damage assessment detected {side} whitening as '{damage_whitening}'")
+
+    except VisionAssessorError as exc:
+        logger.warning(f"Damage assessment failed (non-critical): {exc}")
+        # Don't fail the entire grading, but log the issue
 
     # Stage 2: Build centering result from both sides
     front_centering = front_analysis.get("centering") or {

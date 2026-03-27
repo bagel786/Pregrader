@@ -731,3 +731,113 @@ def assess_card(
             )
 
     return merged
+
+
+def assess_damage_from_full_images(
+    front_img: np.ndarray,
+    back_img: Optional[np.ndarray],
+    api_key: Optional[str] = None,
+) -> Dict:
+    """
+    Dedicated damage assessment using full card images.
+    Focuses on detecting visible creases, whitening, and other physical damage.
+
+    Returns dict with:
+      front: {crease_depth, whitening_coverage, additional_damage, summary}
+      back: {crease_depth, whitening_coverage, additional_damage, summary}
+
+    Raises VisionAssessorError on failure.
+    """
+    key = api_key or os.getenv("ANTHROPIC_API_KEY")
+    if not key:
+        raise VisionAssessorError("ANTHROPIC_API_KEY not set")
+
+    # Load damage assessment prompt
+    damage_prompt_path = Path(__file__).parent / "prompts" / "damage_assessment_prompt.txt"
+    try:
+        with open(damage_prompt_path, "r") as f:
+            damage_prompt = f.read()
+    except FileNotFoundError:
+        raise VisionAssessorError(f"Damage assessment prompt not found at {damage_prompt_path}")
+
+    if not damage_prompt:
+        raise VisionAssessorError("Damage assessment prompt is empty")
+
+    # Prepare images for Vision AI (full card images, not cropped)
+    images_b64 = []
+    image_labels = []
+
+    if front_img is not None:
+        _, front_jpg = cv2.imencode(".jpg", front_img, [cv2.IMWRITE_JPEG_QUALITY, 85])
+        images_b64.append(base64.b64encode(front_jpg).decode("utf-8"))
+        image_labels.append("FRONT")
+
+    if back_img is not None:
+        _, back_jpg = cv2.imencode(".jpg", back_img, [cv2.IMWRITE_JPEG_QUALITY, 85])
+        images_b64.append(base64.b64encode(back_jpg).decode("utf-8"))
+        image_labels.append("BACK")
+
+    if not images_b64:
+        raise VisionAssessorError("No valid images provided for damage assessment")
+
+    # Build message content with images
+    content = [{"type": "text", "text": damage_prompt}]
+    for b64, label in zip(images_b64, image_labels):
+        content.append({
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": "image/jpeg",
+                "data": b64,
+            },
+        })
+
+    # Call Vision AI
+    headers = {
+        "x-api-key": key,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+    }
+
+    payload = {
+        "model": MODEL,
+        "max_tokens": 1024,
+        "messages": [
+            {
+                "role": "user",
+                "content": content,
+            }
+        ],
+    }
+
+    logger.info("Damage assessment: calling Vision AI with full card images")
+
+    try:
+        with httpx.Client(timeout=TIMEOUT_SECONDS) as client:
+            response = client.post(API_URL, json=payload, headers=headers)
+            response.raise_for_status()
+    except httpx.HTTPError as e:
+        raise VisionAssessorError(f"Vision AI damage assessment request failed: {e}")
+
+    try:
+        resp_json = response.json()
+        text_response = resp_json["content"][0]["text"]
+    except (KeyError, IndexError, json.JSONDecodeError) as e:
+        raise VisionAssessorError(f"Failed to parse Vision AI damage response: {e}")
+
+    # Extract JSON from response
+    try:
+        # Try to find JSON in the response
+        start_idx = text_response.find("{")
+        end_idx = text_response.rfind("}") + 1
+        if start_idx == -1 or end_idx == 0:
+            raise ValueError("No JSON found in response")
+        json_str = text_response[start_idx:end_idx]
+        damage_result = json.loads(json_str)
+    except (json.JSONDecodeError, ValueError) as e:
+        logger.warning(f"Damage assessment JSON parse failed: {e}, response: {text_response}")
+        raise VisionAssessorError(f"Damage assessment returned invalid JSON: {e}")
+
+    logger.info(f"Damage assessment complete: front={damage_result.get('front', {})}, back={damage_result.get('back', {})}")
+
+    return damage_result
