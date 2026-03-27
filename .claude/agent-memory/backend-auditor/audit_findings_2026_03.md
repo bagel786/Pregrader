@@ -604,3 +604,112 @@ Total bugs fixed: 16 (no new fixes this round)
 Remaining documentation error: 1 (LOGIC-6 — docstring says cap=3.0, code is 2.0)
 Remaining warnings: 9 total (WARN-2 through WARN-NEW-2)
 Production readiness: MAINTAINED — no grade-correctness issues found
+
+---
+
+## March 27 2026 Round-7 Audit — Damage Detection & Capping Focus
+
+### Scope
+Focused audit of the full damage detection pipeline:
+vision_assessor.py → grade_assembler._apply_damage_cap → combined_grading._vision_to_assembly_input
+
+### New Finding: Hallucination Guard Improved (WARN-NEW-1 resolved)
+- vision_assessor.py line 326: The `in (1.0, 5.0, 10.0)` placeholder restriction flagged in Round-6 is NOW GONE.
+- Current code: `if len(set(corner_scores)) == 1:` — fires on ANY all-identical response, not just placeholders.
+- WARN-NEW-1 is RESOLVED. This was the right fix.
+
+### New Finding: LOGIC-6 docstring staleness (STILL NOT FIXED)
+- grade_assembler.py lines 190-192 docstring still says "heavy crease → cap at 3.0"
+- Actual code: line 217 `cap = 2.0` ← correct per TAG calibration
+- Comment at assemble_grade line 394: "a heavy crease (cap=3)" ← also stale
+- STILL NOT FIXED. Both docstring and inline comment need updating to say 2.0.
+
+### New Finding: WARN-NEW-2 partial guard added
+- grade_assembler.py line 207: `if not isinstance(data, dict): continue` — guard is now in place
+- WARN-NEW-2 is RESOLVED. The isinstance guard correctly skips non-dict sides.
+
+### Real-World Trace: Heavy Crease Card
+Scenario: card with a visible heavy crease, bright lighting, sharp photo.
+
+**Step 1 — Vision AI (vision_assessor.py)**
+- Surface crops sent as front_surface / back_surface full images.
+- Prompt grading_prompt.txt instructs: "A wrinkle or fold that distorts the card surface must be classified as 'heavy'".
+- Prompt also: "A surface score of 5.0 or above requires crease_depth 'hairline' or 'none'."
+- For a heavy crease, Vision AI is expected to return: crease_depth="heavy", surface score ≤ 4.0.
+- Confidence would typically be high (0.8–1.0) for visually obvious damage.
+
+**Step 2 — Dual-pass / median-of-3 (vision_assessor.py _average_passes)**
+- "Most severe wins" merge: if pass1 says "heavy" and pass2 says "moderate", result is "heavy".
+- This is correct — cannot vote away real damage.
+
+**Step 3 — surface_raw propagation (combined_grading.py line 217)**
+- `surface_raw=vision["surface"]` — the raw surface dict (including crease_depth, confidence) is passed to AssemblyInput.
+- surface_confidences is keyed by "front"/"back" from vision["surface"]["front"]["confidence"] etc.
+
+**Step 4 — _apply_damage_cap (grade_assembler.py)**
+- Gate: surface_confidences.get("front", 0.0) >= 0.60 — with visible obvious damage, Vision AI confidence will be high.
+- CREASE_ORDER["heavy"] = 3 → >= 3 triggers heavy cap.
+- cap = 2.0; reason = "heavy crease on front surface".
+- Composite is overridden to 2.0 (if it was higher). This is correct.
+
+**Failure Mode #1: Vision AI says "moderate" not "heavy"**
+- If Vision AI downgrades a heavy crease to "moderate": cap is 5.0 not 2.0.
+- The composite score from Vision AI will likely already be ≤ 4.0 for such a card (surface score 3-4),
+  floor/ceiling would keep it in the 3-5 range anyway.
+- Practical impact: a card that deserves cap=2.0 gets cap=5.0. If composite is already ≤ 5.0 from Vision AI scoring,
+  the cap never fires and the grade is correct by coincidence (Vision AI score carries it).
+  If composite is pushed up by good corners/edges, cap=5.0 vs cap=2.0 matters — up to 3 PSA points difference.
+- RISK: Moderate. Vision AI prompt has strong guidance ("wrinkle or fold = heavy") but inconsistency between
+  the SURFACE SCORING CRITERIA (surface score 3-4 implies heavy crease) and crease_depth label is possible.
+
+**Failure Mode #2: surface_confidence < 0.60 gates the cap off**
+- If Vision AI returns confidence=0.5 for the surface (blur, bad lighting), cap is skipped.
+- Composite score from Vision AI would also have low confidence, but the score itself still feeds the composite.
+- A heavily creased card could score 5-6 if corners/edges are perfect, and the cap won't fire.
+- RISK: Low-Medium. Quality checks gate on can_analyze; very poor images are rejected at upload.
+  Marginally-acceptable images (can_analyze=True, confidence < 0.60) could slip through.
+  The quality check only guards the extreme end.
+
+**Failure Mode #3: crease_depth field omitted / null**
+- Prompt line 128: "crease_depth and whitening_coverage are optional fields. Omit them entirely or set to null if you cannot assess them reliably."
+- If Vision AI returns `crease_depth: null` or omits the field: data.get("crease_depth") → None.
+- `if crease and ...` → None is falsy → cap skipped.
+- This is intentional design (can't penalize what can't be seen). But if Vision AI omits it because of
+  poor image quality or uncertainty (not because there's no crease), a real crease escapes the cap.
+- The surface score would still be lowered by Vision AI's general assessment — but the hard cap won't enforce 2.0.
+- RISK: Low-Medium. The same uncertainty that causes null crease_depth will also lower the Vision AI surface score.
+  The only gap is when Vision AI surface score is inconsistent with its own crease label.
+
+**Failure Mode #4: Inconsistency between surface score and crease_depth label**
+- Prompt says: "A surface score of 5.0 or above requires crease_depth 'hairline' or 'none'."
+- If Vision AI returns surface_score=5.5, crease_depth="heavy" — this contradicts the prompt.
+- _validate_response does NOT check this constraint (only validates score range and identical-corners guard).
+- Result: cap=2.0 fires (correctly), overriding the inconsistent surface score.
+- VERDICT: The damage cap acts as a safety net even against Vision AI self-contradictions. CORRECT.
+
+**Failure Mode #5: moderate crease whitening_coverage="extensive" conflict**
+- A card can have moderate crease AND extensive whitening simultaneously.
+- grade_assembler.py loops through both: if crease="moderate" → cap=5.0; if whitening="extensive" → cap=5.0.
+- Both set cap to 5.0; no conflict. The heavier crease check uses `if cap is None or cap > 2.0` semantics,
+  so if heavy crease fires first → cap=2.0; subsequent whitening check `cap > 5.0` is False → stays at 2.0.
+- VERDICT: Most-severe-wins logic is correct for all combinations. VERIFIED.
+
+### Summary Assessment (Round-7)
+The damage detection pipeline is SOUND for typical cases. Key strengths:
+1. "Most severe wins" dual-pass merge prevents voting away real damage.
+2. isinstance guard protects against malformed surface_raw.
+3. Damage cap fires before centering cap — correct ordering.
+4. Heavy crease cap at 2.0 is calibrated and correctly implemented.
+
+Two legitimate under-penalization scenarios exist (not code bugs, but system limitations):
+A. Vision AI downgrading "heavy" → "moderate" crease: cap fires at 5.0 instead of 2.0.
+   Mitigated by: (a) strong prompt guidance, (b) Vision AI surface score itself being low.
+B. surface_confidence < 0.60 gates off a legitimate damage cap.
+   Mitigated by: upstream quality check rejecting very poor images.
+
+No new code bugs found in Round-7.
+
+### Documents Updated
+- LOGIC-6 (cap=2.0 docstring staleness): STILL OPEN, no fix applied.
+- WARN-NEW-1 (hallucination guard): RESOLVED in code — `in (...)` restriction removed.
+- WARN-NEW-2 (isinstance guard): RESOLVED in code — guard added at line 207.

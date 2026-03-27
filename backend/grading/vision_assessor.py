@@ -718,4 +718,16 @@ def assess_card(
     if merged["low_confidence_flags"]:
         logger.warning(f"Low confidence locations: {merged['low_confidence_flags']}")
 
+    # Log surface assessment details for debugging damage cap
+    for side in ["front", "back"]:
+        if side in merged.get("surface", {}):
+            surf = merged["surface"][side]
+            logger.info(
+                f"Surface assessment [{side}]: "
+                f"score={surf.get('score', 'N/A')}, "
+                f"confidence={surf.get('confidence', 'N/A')}, "
+                f"crease_depth={surf.get('crease_depth', 'none')}, "
+                f"whitening_coverage={surf.get('whitening_coverage', 'none')}"
+            )
+
     return merged

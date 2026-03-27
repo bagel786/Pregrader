@@ -204,9 +204,11 @@ def _apply_damage_cap(
 
     for side in ("front", "back"):
         data = surface_raw.get(side, {})
+        side_conf = surface_confidences.get(side, 0.0)
         if not isinstance(data, dict):
             continue  # Unexpected type, skip this side
-        if surface_confidences.get(side, 0.0) < 0.60:
+        if side_conf < 0.60:
+            logger.debug(f"Damage cap skipped for {side}: confidence {side_conf:.2f} < 0.60")
             continue  # Not confident enough in this side's damage detection
 
         crease    = data.get("crease_depth")
@@ -227,7 +229,10 @@ def _apply_damage_cap(
                 reason = f"extensive whitening on {side} surface"
 
     if cap is not None and composite > cap:
+        logger.info(f"Damage cap applied: {composite:.2f} → {cap} ({reason})")
         return cap, True, reason
+    elif cap is not None:
+        logger.debug(f"Damage cap available ({cap}) but composite {composite:.2f} already below it")
 
     return composite, False, None
 
