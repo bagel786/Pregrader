@@ -13,7 +13,6 @@ from typing import Dict, List, Optional, Tuple
 from pathlib import Path
 
 from analysis.centering import calculate_centering_ratios
-from analysis.creases import detect_surface_creases
 from grading.vision_assessor import assess_card, assess_damage_from_full_images, VisionAssessorError
 from grading.grade_assembler import (
     assemble_grade,
@@ -508,65 +507,18 @@ def combine_front_back_analysis(
         logger.warning(f"Damage assessment failed (non-critical): {exc}")
         # Don't fail the entire grading, but log the issue
 
-    # Stage 3c: OpenCV heuristic crease detection (upgrade-only fallback)
-    # Uses HoughLinesP to find long diagonal lines (creases) in the card interior.
-    # Only upgrades crease_depth, never downgrades. Ensures confidence >= 0.65
-    # so damage cap gate (0.60) is met when heuristic detects a crease.
-    logger.info("[Stage 3c] Starting OpenCV crease detection")
-    try:
-        for side, img in [("front", front_img), ("back", back_img)]:
-            if side not in vision_result.get("surface", {}):
-                continue
-            try:
-                opencv_crease = detect_surface_creases(img, side=side)
-                heuristic_sev = opencv_crease.get("severity", "none")
-                current_sev = vision_result["surface"][side].get("crease_depth", "none")
-                logger.info(
-                    f"[Stage 3c] {side}: opencv={heuristic_sev} vs current={current_sev} "
-                    f"(lines={opencv_crease.get('line_count', 0)}, "
-                    f"max_len={opencv_crease.get('normalized_max_length', 0):.3f})"
-                )
-
-                # Only upgrade, never downgrade
-                current_rank = (
-                    _CREASE_SEVERITY_ORDER.index(current_sev)
-                    if current_sev in _CREASE_SEVERITY_ORDER
-                    else 0
-                )
-                heuristic_rank = (
-                    _CREASE_SEVERITY_ORDER.index(heuristic_sev)
-                    if heuristic_sev in _CREASE_SEVERITY_ORDER
-                    else 0
-                )
-
-                if heuristic_rank > current_rank:
-                    vision_result["surface"][side]["crease_depth"] = heuristic_sev
-                    # Ensure confidence meets damage cap gate
-                    existing_conf = float(
-                        vision_result["surface"][side].get("confidence", 0.0)
-                    )
-                    heuristic_conf = opencv_crease.get("confidence", 0.65)
-                    vision_result["surface"][side]["confidence"] = max(
-                        existing_conf, heuristic_conf
-                    )
-                    logger.info(
-                        f"[Stage 3c] OpenCV upgraded {side} crease: '{current_sev}' → '{heuristic_sev}' "
-                        f"(max_len={opencv_crease.get('normalized_max_length', 0):.3f}, "
-                        f"total_len={opencv_crease.get('normalized_total_length', 0):.3f}, "
-                        f"lines={opencv_crease.get('line_count', 0)}, "
-                        f"holo={opencv_crease.get('is_likely_holo', False)})"
-                    )
-                else:
-                    logger.debug(
-                        f"[Stage 3c] OpenCV heuristic: {side} crease '{heuristic_sev}' "
-                        f"does not upgrade Vision AI '{current_sev}' — skipping"
-                    )
-            except Exception as exc:
-                logger.warning(
-                    f"[Stage 3c] OpenCV crease detection failed for {side} (non-critical): {exc}"
-                )
-    except Exception as exc:
-        logger.warning(f"[Stage 3c] Stage failed with unexpected error (non-critical): {exc}")
+    # Stage 3c: DISABLED — HoughLinesP crease detection (Mar 27)
+    # REASON: False positive rate too high. Near-mint cards flagged as heavy creases due to
+    # artwork/holographic pattern edges being indistinguishable from actual crease lines.
+    # HoughLinesP cannot distinguish artwork diagonals from damage creases.
+    # Reverted to Vision AI detection only until a better algorithm is implemented
+    # (ML-based crease detection or texture/curvature analysis).
+    #
+    # Kept creases.py for future reference; can be re-enabled with improved filtering:
+    # - Require minimum line separation (creases don't cluster)
+    # - Filter by line prominence/darkness (creases darker than artwork)
+    # - Require lines to span card edge-to-edge (not local segments)
+    # - Template matching against known crease patterns
 
     # Stage 2: Build centering result from both sides
     front_centering = front_analysis.get("centering") or {
