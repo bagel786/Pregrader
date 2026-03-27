@@ -21,8 +21,9 @@ logger = logging.getLogger(__name__)
 INTERIOR_MARGIN_FRACTION = 0.07
 
 # Canny thresholds — lower than corners.py to catch faint hairline creases
-CANNY_LOW = 30
-CANNY_HIGH = 100
+# For holographic cards, these are aggressive to cut through foil sparkle
+CANNY_LOW = 20
+CANNY_HIGH = 80
 
 # HoughLinesP core parameters
 HOUGH_RHO = 1
@@ -38,14 +39,16 @@ MIN_LINE_FRACTION_HOLO = 0.22  # holographic cards: tighter threshold
 AXIS_ANGLE_EXCLUSION_DEG = 10
 
 # Holofoil detection: if raw short-line count exceeds this, card is likely holo
-HOLO_SHORT_LINE_THRESHOLD = 200
+# Lowered threshold to catch more holographic cards (Rainbow Rares, Full-Art, etc.)
+HOLO_SHORT_LINE_THRESHOLD = 120
 
 # Severity classification thresholds (normalized against card diagonal)
-THRESHOLD_HAIRLINE_MAX = 0.12  # normalized_max_length >= this → at least hairline
-THRESHOLD_MODERATE_MAX = 0.22  # normalized_max_length >= this → at least moderate
-THRESHOLD_HEAVY_MAX = 0.40  # normalized_max_length >= this → heavy
-THRESHOLD_HEAVY_TOTAL = 0.80  # OR: normalized_total_length >= this → heavy
-THRESHOLD_MODERATE_TOTAL = 0.50  # normalized_total_length >= this when moderate → confirms moderate
+# Lowered to be more sensitive for holographic cards where creases are harder to see
+THRESHOLD_HAIRLINE_MAX = 0.08  # normalized_max_length >= this → at least hairline
+THRESHOLD_MODERATE_MAX = 0.16  # normalized_max_length >= this → at least moderate
+THRESHOLD_HEAVY_MAX = 0.32  # normalized_max_length >= this → heavy
+THRESHOLD_HEAVY_TOTAL = 0.65  # OR: normalized_total_length >= this → heavy
+THRESHOLD_MODERATE_TOTAL = 0.40  # normalized_total_length >= this when moderate → confirms moderate
 
 
 def _angle_from_axes(x1: int, y1: int, x2: int, y2: int) -> float:
