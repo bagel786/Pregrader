@@ -512,6 +512,7 @@ def combine_front_back_analysis(
     # Uses HoughLinesP to find long diagonal lines (creases) in the card interior.
     # Only upgrades crease_depth, never downgrades. Ensures confidence >= 0.65
     # so damage cap gate (0.60) is met when heuristic detects a crease.
+    logger.info("[Stage 3c] Starting OpenCV crease detection")
     try:
         for side, img in [("front", front_img), ("back", back_img)]:
             if side not in vision_result.get("surface", {}):
@@ -520,6 +521,11 @@ def combine_front_back_analysis(
                 opencv_crease = detect_surface_creases(img, side=side)
                 heuristic_sev = opencv_crease.get("severity", "none")
                 current_sev = vision_result["surface"][side].get("crease_depth", "none")
+                logger.info(
+                    f"[Stage 3c] {side}: opencv={heuristic_sev} vs current={current_sev} "
+                    f"(lines={opencv_crease.get('line_count', 0)}, "
+                    f"max_len={opencv_crease.get('normalized_max_length', 0):.3f})"
+                )
 
                 # Only upgrade, never downgrade
                 current_rank = (
