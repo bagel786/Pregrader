@@ -764,16 +764,17 @@ def assess_damage_from_full_images(
         raise VisionAssessorError("Damage assessment prompt is empty")
 
     # Prepare images for Vision AI (full card images, not cropped)
+    # Use high quality (95%) to preserve damage detail for detection
     images_b64 = []
     image_labels = []
 
     if front_img is not None:
-        _, front_jpg = cv2.imencode(".jpg", front_img, [cv2.IMWRITE_JPEG_QUALITY, 85])
+        _, front_jpg = cv2.imencode(".jpg", front_img, [cv2.IMWRITE_JPEG_QUALITY, 95])
         images_b64.append(base64.b64encode(front_jpg).decode("utf-8"))
         image_labels.append("FRONT")
 
     if back_img is not None:
-        _, back_jpg = cv2.imencode(".jpg", back_img, [cv2.IMWRITE_JPEG_QUALITY, 85])
+        _, back_jpg = cv2.imencode(".jpg", back_img, [cv2.IMWRITE_JPEG_QUALITY, 95])
         images_b64.append(base64.b64encode(back_jpg).decode("utf-8"))
         image_labels.append("BACK")
 
@@ -838,6 +839,15 @@ def assess_damage_from_full_images(
         logger.warning(f"Damage assessment JSON parse failed: {e}, response: {text_response}")
         raise VisionAssessorError(f"Damage assessment returned invalid JSON: {e}")
 
-    logger.info(f"Damage assessment complete: front={damage_result.get('front', {})}, back={damage_result.get('back', {})}")
+    # Log detailed damage assessment results
+    for side in ["front", "back"]:
+        side_data = damage_result.get(side, {})
+        logger.info(
+            f"Damage assessment [{side}]: "
+            f"crease={side_data.get('crease_depth', 'none')}, "
+            f"whitening={side_data.get('whitening_coverage', 'none')}, "
+            f"confidence={side_data.get('confidence', '?')}, "
+            f"notes={side_data.get('notes', 'none')}"
+        )
 
     return damage_result
