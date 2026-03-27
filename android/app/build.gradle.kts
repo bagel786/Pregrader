@@ -30,12 +30,12 @@ android {
     }
 
     signingConfigs {
-        create("release") {
-            if (keyProperties.isNotEmpty()) {
-                keyAlias = keyProperties["keyAlias"] as String
-                keyPassword = keyProperties["keyPassword"] as String
-                storeFile = file(keyProperties["storeFile"] as String)
-                storePassword = keyProperties["storePassword"] as String
+        if (keyProperties.containsKey("storeFile")) {
+            create("release") {
+                keyAlias = keyProperties["keyAlias"].toString()
+                keyPassword = keyProperties["keyPassword"].toString()
+                storeFile = file(keyProperties["storeFile"].toString())
+                storePassword = keyProperties["storePassword"].toString()
             }
         }
     }
