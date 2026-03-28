@@ -509,13 +509,27 @@ def combine_front_back_analysis(
         # Don't fail the entire grading, but log the issue
 
     # Stage 3c: Enhanced damage assessment on preprocessed images (upgrade-only)
-    # Removes holographic foil noise via split-region grayscale+CLAHE preprocessing,
-    # then re-assesses with Vision AI. Only upgrades damage severity, never downgrades.
-    # Avoids artwork-edge false positives by using mild CLAHE in art interior.
+    # Removes holographic foil noise via split-region grayscale+CLAHE preprocessing on FRONT only.
+    # Back cards are simple blue pattern without foil noise, so skip preprocessing to avoid
+    # over-smoothing crease signals. Re-assesses with Vision AI. Only upgrades severity, never downgrades.
     _WH_ORDER = ["none", "minor", "moderate", "extensive"]
     try:
+        # Front: apply preprocessing to strip holographic foil noise
         front_enhanced = enhance_for_damage_detection(front_img)
-        back_enhanced = enhance_for_damage_detection(back_img) if back_img is not None else None
+
+        # Back: detect actual side to decide preprocessing
+        # Back cards (blue + Pokeball) don't have holographic foil noise, so skip preprocessing
+        # to preserve crease signal visibility.
+        back_enhanced = None
+        if back_img is not None:
+            back_side, _ = detect_card_side(back_img)
+            if back_side == "front":
+                # Unlikely but possible: back uploaded as front. Preprocess it anyway.
+                back_enhanced = enhance_for_damage_detection(back_img)
+            else:
+                # Back card: skip preprocessing, use original image
+                back_enhanced = back_img
+
         enhanced_damage = assess_damage_from_full_images(front_enhanced, back_enhanced)
 
         for side in ["front", "back"]:
