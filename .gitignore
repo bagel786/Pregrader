@@ -52,3 +52,6 @@ backend/.env
 android/key.properties
 android/app/*.keystore
 android/app/*.jks
+
+# Claude Code worktrees (local development isolation)
+.claude/worktrees/
