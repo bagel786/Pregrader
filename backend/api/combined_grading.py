@@ -657,6 +657,35 @@ def combine_front_back_analysis(
     except Exception as exc:
         logger.warning(f"[stage3e] Crease detection failed: {exc}")
 
+    # Adjust surface score when creases are detected to match damage cap
+    # (surface score of 8.5 with heavy crease capped to 2.0 is confusing)
+    for side in ["front", "back"]:
+        crease = vision_result.get("surface", {}).get(side, {}).get("crease_depth", "none")
+        if crease == "heavy":
+            old_score = vision_result["surface"][side].get("score", 8.0)
+            vision_result["surface"][side]["score"] = min(2.5, old_score)
+            if old_score > 2.5:
+                logger.info(
+                    f"[surface-adjustment] {side} surface score lowered: {old_score:.1f} → {vision_result['surface'][side]['score']:.1f} "
+                    f"(heavy crease detected)"
+                )
+        elif crease == "moderate":
+            old_score = vision_result["surface"][side].get("score", 8.0)
+            vision_result["surface"][side]["score"] = min(5.0, old_score)
+            if old_score > 5.0:
+                logger.info(
+                    f"[surface-adjustment] {side} surface score lowered: {old_score:.1f} → {vision_result['surface'][side]['score']:.1f} "
+                    f"(moderate crease detected)"
+                )
+        elif crease == "hairline":
+            old_score = vision_result["surface"][side].get("score", 8.0)
+            vision_result["surface"][side]["score"] = min(6.5, old_score)
+            if old_score > 6.5:
+                logger.info(
+                    f"[surface-adjustment] {side} surface score lowered: {old_score:.1f} → {vision_result['surface'][side]['score']:.1f} "
+                    f"(hairline crease detected)"
+                )
+
     # Stage 2: Build centering result from both sides
     front_centering = front_analysis.get("centering") or {
         "centering_cap": 10,

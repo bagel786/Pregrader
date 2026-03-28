@@ -43,12 +43,14 @@ AXIS_ANGLE_EXCLUSION_DEG = 10
 HOLO_SHORT_LINE_THRESHOLD = 120
 
 # Severity classification thresholds (normalized against card diagonal)
-# Lowered to be more sensitive for holographic cards where creases are harder to see
+# Raised significantly after false positives on clean cards (16 lines detected on cardwith no creases)
+# Clean cards had norm_total ~5.0, so HEAVY_TOTAL was 0.65 threshold was too aggressive
 THRESHOLD_HAIRLINE_MAX = 0.08  # normalized_max_length >= this → at least hairline
 THRESHOLD_MODERATE_MAX = 0.16  # normalized_max_length >= this → at least moderate
-THRESHOLD_HEAVY_MAX = 0.32  # normalized_max_length >= this → heavy
-THRESHOLD_HEAVY_TOTAL = 0.65  # OR: normalized_total_length >= this → heavy
-THRESHOLD_MODERATE_TOTAL = 0.40  # normalized_total_length >= this when moderate → confirms moderate
+THRESHOLD_HEAVY_MAX = 0.40  # normalized_max_length >= this → heavy (raised from 0.32)
+THRESHOLD_HEAVY_TOTAL = 2.0  # OR: normalized_total_length >= this → heavy (raised from 0.65)
+THRESHOLD_MODERATE_TOTAL = 0.60  # normalized_total_length >= this when moderate → confirms moderate (raised from 0.40)
+MAX_LINE_COUNT_BEFORE_FALSE_POSITIVE = 20  # >20 lines on a card likely printing texture, not creases
 
 
 def _angle_from_axes(x1: int, y1: int, x2: int, y2: int) -> float:
@@ -162,6 +164,22 @@ def detect_surface_creases(
     max_length = max(lengths)
     norm_max = max_length / card_diagonal
     norm_total = total_length / card_diagonal
+
+    # 8b. False positive filter: too many short lines = printing texture, not creases
+    if line_count > MAX_LINE_COUNT_BEFORE_FALSE_POSITIVE:
+        logger.debug(
+            f"[creases/{side}] False positive filter: {line_count} lines detected (>{MAX_LINE_COUNT_BEFORE_FALSE_POSITIVE}), "
+            f"likely printing texture not creases → downgrading to 'none'"
+        )
+        return {
+            "crease_detected": False,
+            "severity": "none",
+            "confidence": 0.65,
+            "normalized_max_length": round(norm_max, 4),
+            "normalized_total_length": round(norm_total, 4),
+            "line_count": line_count,
+            "is_likely_holo": is_likely_holo,
+        }
 
     # 9. Severity classification
     if norm_max >= THRESHOLD_HEAVY_MAX or norm_total >= THRESHOLD_HEAVY_TOTAL:

@@ -121,9 +121,11 @@ def check_image_quality(image_path: str) -> Dict:
         issues.append(f"Low resolution: {width}x{height} (minimum {min_resolution}px)")
         user_feedback.append("Image resolution too low - move camera closer or use higher quality setting")
     
-    if blur_score < 50:
+    if blur_score < 35:
         issues.append(f"Image too blurry (score: {blur_score:.1f})")
         user_feedback.append("Image is blurry - hold camera steady and tap to focus")
+    elif blur_score < 50:
+        warnings.append(f"Image slightly blurry (score: {blur_score:.1f}) - Japanese/simple back patterns have lower blur scores; this is likely acceptable")
     elif blur_score < 100:
         warnings.append(f"Image slightly blurry (score: {blur_score:.1f})")
     
