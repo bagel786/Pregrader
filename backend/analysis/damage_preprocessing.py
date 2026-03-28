@@ -109,7 +109,18 @@ def enhance_for_damage_detection(img: np.ndarray) -> np.ndarray:
 
     clahe_border = cv2.createCLAHE(clipLimit=1.5, tileGridSize=(8, 8))
     border_pixels = clahe_border.apply(gray)
-    border_pixels = cv2.equalizeHist(border_pixels)  # Histogram equalization for border
+
+    # Skip histogram equalization on white-dominant cards (Mewtwo, Alakazam, etc.)
+    # equalizeHist on a near-white histogram compresses it → masks wear signals
+    border_gray_mean = float(np.mean(gray[border_mask == 255])) if np.any(border_mask) else 0.0
+    if border_gray_mean < 200:
+        border_pixels = cv2.equalizeHist(border_pixels)
+    else:
+        logger.debug(
+            f"[damage_preprocessing] White-dominant card detected (border mean={border_gray_mean:.0f}); "
+            f"skipping equalizeHist to preserve wear signals"
+        )
+
     result_gray[border_mask == 255] = border_pixels[border_mask == 255]
 
     # Art interior region: mild enhancement (light CLAHE only)

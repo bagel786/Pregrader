@@ -563,6 +563,21 @@ def combine_front_back_analysis(
     except Exception as exc:
         logger.warning(f"[Stage 3c] Enhanced damage assessment failed (non-critical): {exc}")
 
+    # Consistency check: creases always cause stress whitening at the fold line.
+    # If Vision AI reported moderate/heavy crease but no whitening, escalate to minor.
+    # This is physically impossible (creases cannot occur without some surface whitening).
+    _WH_ORDER_CONSISTENCY = ["none", "minor", "moderate", "extensive"]
+    for side in ["front", "back"]:
+        surf = vision_result.get("surface", {}).get(side, {})
+        crease = surf.get("crease_depth", "none")
+        whitening = surf.get("whitening_coverage", "none")
+        if crease in ("heavy", "moderate") and whitening == "none":
+            vision_result["surface"][side]["whitening_coverage"] = "minor"
+            logger.info(
+                f"[consistency] {side} crease='{crease}' forces whitening 'none' → 'minor' "
+                f"(stress whitening always accompanies crease)"
+            )
+
     # Stage 2: Build centering result from both sides
     front_centering = front_analysis.get("centering") or {
         "centering_cap": 10,

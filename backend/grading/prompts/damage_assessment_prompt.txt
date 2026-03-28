@@ -31,11 +31,25 @@ CREASE_DEPTH: Severity of visible creases/folds/wrinkles
 RULE: If the card shows ANY visible fold, crease line, or bent area → AT MINIMUM "hairline". If the crease is obvious and distorts the card → "heavy".
 Err on the side of severity.
 
-WHITENING_COVERAGE: Extent of visible whitening/wear
-- "none": No whitening visible at all
-- "minor": Small white spots/wear at 1 location (corner or single edge section)
-- "moderate": Whitening on 2-3 locations or edges
-- "extensive": Widespread whitening across multiple edges/corners, or heavy overall wear
+WHITENING_COVERAGE: Extent of visible whitening/wear (physical wear exposing white card stock)
+- "none": No whitening visible at all — edges and corners retain full ink/colour
+- "minor": Small white spots or wear at 1 location only (e.g., one corner tip, or one edge midpoint).
+  Affects < 5% of the card border area. Light handling marks count as minor.
+- "moderate": Whitening at 2–3 locations, or one full edge with consistent wear along it.
+  Affects roughly 5–20% of the card border area. Clearly visible without magnification.
+- "extensive": Widespread whitening across 3+ locations, multiple full edges, or heavy overall border wear.
+  Affects > 20% of the card border area. Unmistakable at a glance.
+
+LOCATION GUIDE — look specifically at:
+  • Corner tips (4 corners: very common wear point)
+  • Top edge (centre and along the full length)
+  • Bottom edge (centre and along the full length)
+  • Left and right edges (side wear from storage/handling)
+
+WHITE BACKGROUND CARDS: On cards with white or very pale artwork backgrounds (Mewtwo, Alakazam,
+white borders), whitening may appear as texture disruption or extra brightness relative to
+surrounding areas. Look for fraying, roughness, or lightened areas at corners/edges rather than
+colour contrast.
 
 ADDITIONAL_DAMAGE: Other visible damage (tears, stains, creases, bends). Describe what you see.
 
