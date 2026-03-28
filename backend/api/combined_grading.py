@@ -546,25 +546,49 @@ def combine_front_back_analysis(
             cur_crease = vision_result["surface"][side].get("crease_depth", "none")
             cur_white = vision_result["surface"][side].get("whitening_coverage", "none")
 
-            # Upgrade crease if enhanced detection found worse severity
+            # Upgrade crease if enhanced detection found worse severity.
+            # Cap upgrade to at most 1 severity level above Stage 3b baseline:
+            # CLAHE preprocessing can create visual artifacts (e.g. foil sparkle → fake crease lines),
+            # so none→heavy jumps are false positives. A 1-level cap means Stage 3c
+            # can flag subtle creases Stage 3b missed (none→hairline) but can't catastrophically
+            # misgrade a clean card (none→heavy).
             if _CREASE_SEVERITY_ORDER.index(enh_crease) > _CREASE_SEVERITY_ORDER.index(cur_crease):
-                vision_result["surface"][side]["crease_depth"] = enh_crease
+                cur_idx = _CREASE_SEVERITY_ORDER.index(cur_crease)
+                max_allowed_idx = min(cur_idx + 1, len(_CREASE_SEVERITY_ORDER) - 1)
+                capped_crease = _CREASE_SEVERITY_ORDER[min(_CREASE_SEVERITY_ORDER.index(enh_crease), max_allowed_idx)]
+                vision_result["surface"][side]["crease_depth"] = capped_crease
                 # Floor confidence to ensure damage cap gate (0.60) is met
                 vision_result["surface"][side]["confidence"] = max(
                     float(vision_result["surface"][side].get("confidence", 0.0)), 0.65
                 )
-                logger.info(
-                    f"[Stage 3c] Enhanced preprocessing upgraded {side} crease: "
-                    f"'{cur_crease}' → '{enh_crease}'"
-                )
+                if capped_crease != enh_crease:
+                    logger.info(
+                        f"[Stage 3c] Enhanced preprocessing upgraded {side} crease: "
+                        f"'{cur_crease}' → '{capped_crease}' (capped from '{enh_crease}' — 1-level limit)"
+                    )
+                else:
+                    logger.info(
+                        f"[Stage 3c] Enhanced preprocessing upgraded {side} crease: "
+                        f"'{cur_crease}' → '{capped_crease}'"
+                    )
 
-            # Upgrade whitening if enhanced detection found worse severity
+            # Upgrade whitening if enhanced detection found worse severity.
+            # Same 1-level cap as crease: prevents CLAHE artifacts from inflating whitening.
             if _WH_ORDER.index(enh_white) > _WH_ORDER.index(cur_white):
-                vision_result["surface"][side]["whitening_coverage"] = enh_white
-                logger.info(
-                    f"[Stage 3c] Enhanced preprocessing upgraded {side} whitening: "
-                    f"'{cur_white}' → '{enh_white}'"
-                )
+                cur_wh_idx = _WH_ORDER.index(cur_white)
+                max_wh_idx = min(cur_wh_idx + 1, len(_WH_ORDER) - 1)
+                capped_white = _WH_ORDER[min(_WH_ORDER.index(enh_white), max_wh_idx)]
+                vision_result["surface"][side]["whitening_coverage"] = capped_white
+                if capped_white != enh_white:
+                    logger.info(
+                        f"[Stage 3c] Enhanced preprocessing upgraded {side} whitening: "
+                        f"'{cur_white}' → '{capped_white}' (capped from '{enh_white}' — 1-level limit)"
+                    )
+                else:
+                    logger.info(
+                        f"[Stage 3c] Enhanced preprocessing upgraded {side} whitening: "
+                        f"'{cur_white}' → '{capped_white}'"
+                    )
     except Exception as exc:
         logger.warning(f"[Stage 3c] Enhanced damage assessment failed (non-critical): {exc}")
 
