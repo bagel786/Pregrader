@@ -351,15 +351,9 @@ def _validate_response(data: Dict) -> None:
             f"likely Vision AI hallucination. Full distribution: {dict(score_counts)}"
         )
 
-    # Guard 3: Suspiciously low variance — std_dev < 0.2 means all corners within 0.4 of mean
-    # (Real cards with natural wear vary more; e.g., one corner perfect 9.0, another worn 7.0)
-    if len(corner_scores) == 8:
-        std_dev = statistics.stdev(corner_scores)
-        if std_dev < 0.2:
-            raise ValueError(
-                f"Corner scores have suspiciously low variance (stdev={std_dev:.3f}). "
-                f"All scores too similar: {corner_scores} — likely Vision AI hallucination"
-            )
+    # Guard 3 (removed): stdev < 0.2 check was discarded because it false-rejects
+    # genuine gem-mint cards where all 8 corners score 9.5 (stdev=0.0). Guards 1 and 2
+    # already cover the uniform-hallucination case.
 
 
 def _call_api_sync(images: List[Dict], api_key: str) -> Dict:
@@ -816,9 +810,11 @@ def assess_damage_from_full_images(
     if not images_b64:
         raise VisionAssessorError("No valid images provided for damage assessment")
 
-    # Build message content with images
-    content = [{"type": "text", "text": damage_prompt}]
+    # Build message content with images (prompt goes in system key, not user message,
+    # so the model gives it higher authority and is less likely to add markdown fencing)
+    content = []
     for b64, label in zip(images_b64, image_labels):
+        content.append({"type": "text", "text": f"[{label}]"})
         content.append({
             "type": "image",
             "source": {
@@ -838,6 +834,7 @@ def assess_damage_from_full_images(
     payload = {
         "model": MODEL,
         "max_tokens": 1024,
+        "system": damage_prompt,
         "messages": [
             {
                 "role": "user",
@@ -873,6 +870,32 @@ def assess_damage_from_full_images(
     except (json.JSONDecodeError, ValueError) as e:
         logger.warning(f"Damage assessment JSON parse failed: {e}, response: {text_response}")
         raise VisionAssessorError(f"Damage assessment returned invalid JSON: {e}")
+
+    # Schema validation: ensure expected keys and valid enum values are present
+    _valid_crease = {"none", "hairline", "moderate", "heavy"}
+    _valid_whitening = {"none", "minor", "moderate", "extensive"}
+    for side in ["front", "back"]:
+        side_data = damage_result.get(side)
+        if not isinstance(side_data, dict):
+            logger.warning(f"Damage assessment missing '{side}' key — defaulting to no damage")
+            damage_result[side] = {
+                "crease_depth": "none",
+                "whitening_coverage": "none",
+                "confidence": 0.0,
+                "notes": "missing from response",
+            }
+            continue
+        # Coerce invalid enum values to safest default (most severe handled by _normalize_label later)
+        if side_data.get("crease_depth") not in _valid_crease:
+            logger.warning(
+                f"Damage assessment [{side}] invalid crease_depth "
+                f"'{side_data.get('crease_depth')}' — will be normalized downstream"
+            )
+        if side_data.get("whitening_coverage") not in _valid_whitening:
+            logger.warning(
+                f"Damage assessment [{side}] invalid whitening_coverage "
+                f"'{side_data.get('whitening_coverage')}' — will be normalized downstream"
+            )
 
     # Log detailed damage assessment results
     for side in ["front", "back"]:

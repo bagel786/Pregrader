@@ -77,6 +77,12 @@ class EdgeScores:
         return (self.back_top + self.back_right +
                 self.back_bottom + self.back_left) / 4.0
 
+    def front_worst(self) -> float:
+        return min(self.front_top, self.front_right, self.front_bottom, self.front_left)
+
+    def back_worst(self) -> float:
+        return min(self.back_top, self.back_right, self.back_bottom, self.back_left)
+
 
 @dataclass
 class SurfaceScores:
@@ -139,10 +145,15 @@ def _blend_corners(corners: CornerScores) -> Tuple[float, float, float]:
 
 
 def _blend_edges(edges: EdgeScores) -> Tuple[float, float, float]:
-    """PRD 4.1: edges 65/35 front-weighted. Returns (blended, front_avg, back_avg)."""
+    """PRD 4.1: edges 65/35 front-weighted, with 50% avg + 50% worst per side
+    (mirrors corner blending — a single chipped edge meaningfully drags the score).
+    Returns (blended, front_avg, back_avg) — avgs returned unchanged for display.
+    """
     fa = edges.front_avg()
     ba = edges.back_avg()
-    blended = (fa * 0.65) + (ba * 0.35)
+    front_score = (fa * 0.5) + (edges.front_worst() * 0.5)
+    back_score = (ba * 0.5) + (edges.back_worst() * 0.5)
+    blended = (front_score * 0.65) + (back_score * 0.35)
     return blended, fa, ba
 
 

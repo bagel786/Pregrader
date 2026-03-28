@@ -54,11 +54,13 @@ def enhance_for_damage_detection(img: np.ndarray) -> np.ndarray:
     if ART_BOX_AVAILABLE:
         try:
             art_box = detect_inner_artwork_box(img)
-            if art_box is not None and art_box.get("success", False):
-                left_border = art_box.get("left", int(w * 0.15))
-                right_border = art_box.get("right", int(w * 0.15))
-                top_border = art_box.get("top", int(h * 0.15))
-                bottom_border = art_box.get("bottom", int(h * 0.15))
+            if art_box is not None:
+                # Returns (x, y, box_w, box_h) tuple from centering.py
+                bx, by, bw_box, bh_box = art_box
+                left_border = bx
+                right_border = w - (bx + bw_box)
+                top_border = by
+                bottom_border = h - (by + bh_box)
             else:
                 # Fallback: fixed margin
                 margin = int(min(w, h) * 0.15)

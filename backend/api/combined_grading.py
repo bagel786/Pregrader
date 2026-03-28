@@ -515,6 +515,9 @@ def combine_front_back_analysis(
     # Back cards are simple blue pattern without foil noise, so skip preprocessing to avoid
     # over-smoothing crease signals. Re-assesses with Vision AI. Only upgrades severity, never downgrades.
     _WH_ORDER = ["none", "minor", "moderate", "extensive"]
+    # Safe defaults so Stage 3e always has images even if Stage 3c raises an exception
+    front_enhanced = front_img
+    back_enhanced = back_img
     try:
         # Front: apply preprocessing to strip holographic foil noise
         front_enhanced = enhance_for_damage_detection(front_img)
@@ -564,21 +567,6 @@ def combine_front_back_analysis(
                 )
     except Exception as exc:
         logger.warning(f"[Stage 3c] Enhanced damage assessment failed (non-critical): {exc}")
-
-    # Consistency check: creases always cause stress whitening at the fold line.
-    # If Vision AI reported moderate/heavy crease but no whitening, escalate to minor.
-    # This is physically impossible (creases cannot occur without some surface whitening).
-    _WH_ORDER_CONSISTENCY = ["none", "minor", "moderate", "extensive"]
-    for side in ["front", "back"]:
-        surf = vision_result.get("surface", {}).get(side, {})
-        crease = surf.get("crease_depth", "none")
-        whitening = surf.get("whitening_coverage", "none")
-        if crease in ("heavy", "moderate") and whitening == "none":
-            vision_result["surface"][side]["whitening_coverage"] = "minor"
-            logger.info(
-                f"[consistency] {side} crease='{crease}' forces whitening 'none' → 'minor' "
-                f"(stress whitening always accompanies crease)"
-            )
 
     # ── Stage 3d: OpenCV border texture analysis ──────────────────────────────
     # Multi-scale Sobel gradient + local std dev on border region.
@@ -656,6 +644,20 @@ def combine_front_back_analysis(
                 )
     except Exception as exc:
         logger.warning(f"[stage3e] Crease detection failed: {exc}")
+
+    # Consistency check: creases always cause stress whitening at the fold line.
+    # Runs after ALL stages (3c/3d/3e) so any late crease upgrades are covered.
+    # If moderate/heavy crease was detected but no whitening, escalate to minor.
+    for side in ["front", "back"]:
+        surf = vision_result.get("surface", {}).get(side, {})
+        crease = surf.get("crease_depth", "none")
+        whitening = surf.get("whitening_coverage", "none")
+        if crease in ("heavy", "moderate") and whitening == "none":
+            vision_result["surface"][side]["whitening_coverage"] = "minor"
+            logger.info(
+                f"[consistency] {side} crease='{crease}' forces whitening 'none' → 'minor' "
+                f"(stress whitening always accompanies crease)"
+            )
 
     # Adjust surface score when creases are detected to match damage cap
     # (surface score of 8.5 with heavy crease capped to 2.0 is confusing)
