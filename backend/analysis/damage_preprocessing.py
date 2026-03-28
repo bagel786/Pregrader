@@ -94,34 +94,30 @@ def enhance_for_damage_detection(img: np.ndarray) -> np.ndarray:
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
     # ─────────────────────────────────────────────────────────────────────
-    # Step 3: Apply CLAHE to full image first (common base processing)
-    # ─────────────────────────────────────────────────────────────────────
-
-    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
-    clahe_full = clahe.apply(gray)
-
-    # ─────────────────────────────────────────────────────────────────────
     # Step 4: Split-region enhancement
     # ─────────────────────────────────────────────────────────────────────
 
     result_gray = np.zeros_like(gray)
 
-    # Border region: aggressive enhancement (CLAHE + histogram equalization)
+    # Border region: moderate enhancement (CLAHE + histogram equalization)
+    # Reduced clipLimit from 3.0 to 1.5 to avoid over-amplifying normal wear
     border_mask = np.zeros((h, w), dtype=np.uint8)
     border_mask[0:art_y1, :] = 255  # Top border
     border_mask[art_y2:h, :] = 255  # Bottom border
     border_mask[:, 0:art_x1] = 255  # Left border
     border_mask[:, art_x2:w] = 255  # Right border
 
-    border_pixels = clahe_full.copy()
+    clahe_border = cv2.createCLAHE(clipLimit=1.5, tileGridSize=(8, 8))
+    border_pixels = clahe_border.apply(gray)
     border_pixels = cv2.equalizeHist(border_pixels)  # Histogram equalization for border
     result_gray[border_mask == 255] = border_pixels[border_mask == 255]
 
-    # Art interior region: mild enhancement (lighter CLAHE only)
+    # Art interior region: mild enhancement (light CLAHE only)
+    # Reduced clipLimit from 2.0 to 1.0 to avoid false creases from printing texture
     interior_mask = np.zeros((h, w), dtype=np.uint8)
     interior_mask[art_y1:art_y2, art_x1:art_x2] = 255
 
-    clahe_mild = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    clahe_mild = cv2.createCLAHE(clipLimit=1.0, tileGridSize=(8, 8))
     interior_pixels = clahe_mild.apply(gray)  # Mild CLAHE only, no histogram eq
     result_gray[interior_mask == 255] = interior_pixels[interior_mask == 255]
 
