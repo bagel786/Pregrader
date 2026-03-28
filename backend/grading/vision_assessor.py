@@ -12,6 +12,7 @@ import base64
 import json
 import logging
 import statistics
+from collections import Counter
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -321,10 +322,44 @@ def _validate_response(data: Dict) -> None:
         if score is None or not (1.0 <= float(score) <= 10.0):
             raise ValueError(f"Surface {side} score out of range: {score}")
 
-    # Hallucination guard: all 8 corners identical indicates likely hallucinated output
+    # Enhanced hallucination guard: detects exact all-identical, majority-identical, and low-variance cases
     corner_scores = [float(data["corners"][k]["score"]) for k in required_corners]
+
+    # Log corner score distribution for debugging
+    if len(corner_scores) == 8:
+        mean = statistics.mean(corner_scores)
+        std_dev = statistics.stdev(corner_scores)
+        score_counts = Counter(corner_scores)
+        logger.debug(
+            f"[Vision AI] Corner scores: {corner_scores} | "
+            f"mean={mean:.2f}, stdev={std_dev:.3f}, unique={len(set(corner_scores))}, "
+            f"distribution={dict(score_counts)}"
+        )
+
+    # Guard 1: All 8 identical — strongest hallucination signal
     if len(set(corner_scores)) == 1:
-        raise ValueError(f"All 8 corner scores are identical ({corner_scores[0]}) — likely hallucinated output")
+        raise ValueError(
+            f"All 8 corner scores identical ({corner_scores[0]}) — Vision AI hallucinated output"
+        )
+
+    # Guard 2: 7+ of 8 identical — strong hallucination signal (real cards rarely have 7 corners with same score)
+    score_counts = Counter(corner_scores)
+    most_common_score, count = score_counts.most_common(1)[0]
+    if count >= 7:
+        raise ValueError(
+            f"{count} of 8 corners have identical score ({most_common_score}) — "
+            f"likely Vision AI hallucination. Full distribution: {dict(score_counts)}"
+        )
+
+    # Guard 3: Suspiciously low variance — std_dev < 0.2 means all corners within 0.4 of mean
+    # (Real cards with natural wear vary more; e.g., one corner perfect 9.0, another worn 7.0)
+    if len(corner_scores) == 8:
+        std_dev = statistics.stdev(corner_scores)
+        if std_dev < 0.2:
+            raise ValueError(
+                f"Corner scores have suspiciously low variance (stdev={std_dev:.3f}). "
+                f"All scores too similar: {corner_scores} — likely Vision AI hallucination"
+            )
 
 
 def _call_api_sync(images: List[Dict], api_key: str) -> Dict:
