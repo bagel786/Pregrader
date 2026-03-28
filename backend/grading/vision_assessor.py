@@ -20,7 +20,7 @@ import cv2
 import httpx
 import numpy as np
 
-from ..analysis.corners import CornerDetector
+from analysis.corners import CornerDetector
 
 logger = logging.getLogger(__name__)
 
