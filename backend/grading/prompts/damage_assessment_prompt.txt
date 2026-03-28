@@ -24,21 +24,29 @@ For each side, assess:
 
 CREASE_DEPTH: Severity of visible creases/folds/wrinkles
 - "none": Absolutely no visible crease, fold, wrinkle, or distortion
+  Visual anchor: The card surface is completely flat; no lines, ridges, or distortions visible from any angle.
 - "hairline": Very faint crease barely visible, minimal surface impact
+  Visual anchor: A very faint surface stress mark only visible at glancing angles; the surface is not broken and the card geometry is undisturbed.
 - "moderate": Clear crease visible with some surface distortion
+  Visual anchor: A clearly visible crease line where the card was bent — obvious without magnification, but card edges are still relatively straight.
 - "heavy": OBVIOUS crease(s) - surface is visibly broken/bent/folded, card geometry clearly distorted
+  Visual anchor: The card geometry is visibly distorted; the fold is deep enough to cast a shadow and the card no longer lies flat.
 
 RULE: If the card shows ANY visible fold, crease line, or bent area → AT MINIMUM "hairline". If the crease is obvious and distorts the card → "heavy".
 Err on the side of severity.
 
 WHITENING_COVERAGE: Extent of visible whitening/wear (physical wear exposing white card stock)
 - "none": No whitening visible at all — edges and corners retain full ink/colour
+  Visual anchor: All 4 corners and all edges retain crisp, fully-coloured ink. No bright spots anywhere on the border.
 - "minor": Small white spots or wear at 1 location only (e.g., one corner tip, or one edge midpoint).
   Affects < 5% of the card border area. Light handling marks count as minor.
+  Visual anchor: One corner tip shows 1–2 mm of white where ink has worn off, or a small bright patch at one edge midpoint. The rest of the border is clean.
 - "moderate": Whitening at 2–3 locations, or one full edge with consistent wear along it.
   Affects roughly 5–20% of the card border area. Clearly visible without magnification.
+  Visual anchor: Two opposite corners show whitening, or one entire edge has consistent white wear visible end-to-end. Obvious without magnification.
 - "extensive": Widespread whitening across 3+ locations, multiple full edges, or heavy overall border wear.
   Affects > 20% of the card border area. Unmistakable at a glance.
+  Visual anchor: 3+ corners show white, or multiple full edges are worn — white visible everywhere along the border at a glance.
 
 LOCATION GUIDE — look specifically at:
   • Corner tips (4 corners: very common wear point)

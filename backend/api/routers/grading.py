@@ -305,8 +305,11 @@ async def upload_back_image(
             "session_id": session_id,
             "status": "complete",
             "grading": combined_grade.get("grade"),
+            "annotated_front_image": combined_grade.get("annotated_front_image"),
             "details": {
                 "centering": combined_grade.get("centering"),
+                "front_centering": combined_grade.get("front_centering"),
+                "back_centering": combined_grade.get("back_centering"),
                 "corners": combined_grade.get("corners"),
                 "edges": combined_grade.get("edges"),
                 "surface": combined_grade.get("surface"),

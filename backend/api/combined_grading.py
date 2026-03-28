@@ -14,6 +14,7 @@ from pathlib import Path
 
 from analysis.centering import calculate_centering_ratios
 from analysis.damage_preprocessing import enhance_for_damage_detection
+from analysis.texture import detect_border_wear
 from grading.vision_assessor import assess_card, assess_damage_from_full_images, VisionAssessorError
 from grading.grade_assembler import (
     assemble_grade,
@@ -578,6 +579,40 @@ def combine_front_back_analysis(
                 f"(stress whitening always accompanies crease)"
             )
 
+    # ── Stage 3d: OpenCV border texture analysis ──────────────────────────────
+    # Multi-scale Sobel gradient + local std dev on border region.
+    # Upgrade-only (never downgrades). Confidence deliberately 0.55 → below
+    # 0.60 damage-cap gate, so this stage affects label display only.
+    # Set STAGE_3D_ACTIVE = True after validating thresholds on real cards.
+    STAGE_3D_ACTIVE = False  # dry-run: logs only, does not modify grades
+    try:
+        for _img, _side in [(front_img, "front"), (back_img, "back")]:
+            if _img is None:
+                continue
+            wear = detect_border_wear(_img)
+            ocv_white = wear.get("whitening_coverage", "none")
+            ocv_score = wear.get("score", 0.0)
+            cur_white = vision_result.get("surface", {}).get(_side, {}).get("whitening_coverage", "none")
+            if _WH_ORDER.index(ocv_white) > _WH_ORDER.index(cur_white):
+                if STAGE_3D_ACTIVE:
+                    vision_result["surface"][_side]["whitening_coverage"] = ocv_white
+                    logger.info(
+                        f"[stage3d] {_side} whitening upgraded: '{cur_white}' → '{ocv_white}' "
+                        f"(score={ocv_score:.1f})"
+                    )
+                else:
+                    logger.debug(
+                        f"[stage3d DRY-RUN] {_side} would upgrade whitening: "
+                        f"'{cur_white}' → '{ocv_white}' (score={ocv_score:.1f})"
+                    )
+            else:
+                logger.debug(
+                    f"[stage3d] {_side} whitening unchanged: OpenCV='{ocv_white}' "
+                    f"(score={ocv_score:.1f}), Vision='{cur_white}'"
+                )
+    except Exception as exc:
+        logger.warning(f"[stage3d] Border texture analysis failed: {exc}")
+
     # Stage 2: Build centering result from both sides
     front_centering = front_analysis.get("centering") or {
         "centering_cap": 10,
@@ -621,5 +656,20 @@ def combine_front_back_analysis(
     combined["corners"] = corners_out
     combined["edges"] = edges_out
     combined["surface"] = surface_out
+
+    # Stage 5: Annotated image (non-blocking — failure is silent)
+    try:
+        from analysis.annotation import annotate_card_image
+        individual = assembler_out.get("individual_scores", {})
+        annotated_b64 = annotate_card_image(
+            image_path=front_path,
+            corner_scores=individual.get("corners", {}),
+            edge_scores=individual.get("edges", {}),
+            centering_data=front_centering,
+        )
+        if annotated_b64:
+            combined["annotated_front_image"] = annotated_b64
+    except Exception as exc:
+        logger.warning(f"Annotation failed (non-critical): {exc}")
 
     return combined
