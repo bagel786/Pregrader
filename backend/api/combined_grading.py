@@ -15,6 +15,7 @@ from pathlib import Path
 from analysis.centering import calculate_centering_ratios
 from analysis.damage_preprocessing import enhance_for_damage_detection
 from analysis.texture import detect_border_wear
+from analysis.creases import detect_surface_creases
 from grading.vision_assessor import assess_card, assess_damage_from_full_images, VisionAssessorError
 from grading.grade_assembler import (
     assemble_grade,
@@ -612,6 +613,49 @@ def combine_front_back_analysis(
                 )
     except Exception as exc:
         logger.warning(f"[stage3d] Border texture analysis failed: {exc}")
+
+    # ── Stage 3e: OpenCV HoughLinesP crease detection ────────────────────────
+    # Runs detect_surface_creases() on the Stage 3c preprocessed image
+    # (grayscale + CLAHE, foil noise stripped) — upgrade-only, never downgrades.
+    # Confidence 0.65 for moderate/heavy (triggers damage cap gate at 0.60).
+    # Confidence 0.55 for hairline (shows label, no grade cap enforcement).
+    STAGE_3E_ACTIVE = True
+    try:
+        for _enh_img, _side in [(front_enhanced, "front"), (back_enhanced, "back")]:
+            if _enh_img is None:
+                continue
+            crease_result = detect_surface_creases(_enh_img, side=_side)
+            ocv_crease = crease_result.get("severity", "none")
+            ocv_conf = crease_result.get("confidence", 0.65)
+            cur_crease = vision_result.get("surface", {}).get(_side, {}).get("crease_depth", "none")
+
+            if _CREASE_SEVERITY_ORDER.index(ocv_crease) > _CREASE_SEVERITY_ORDER.index(cur_crease):
+                if STAGE_3E_ACTIVE:
+                    vision_result["surface"][_side]["crease_depth"] = ocv_crease
+                    # Floor confidence above damage-cap gate for moderate/heavy
+                    if ocv_crease in ("moderate", "heavy"):
+                        vision_result["surface"][_side]["confidence"] = max(
+                            float(vision_result["surface"][_side].get("confidence", 0.0)),
+                            0.65,
+                        )
+                    logger.info(
+                        f"[stage3e] {_side} crease upgraded: '{cur_crease}' → '{ocv_crease}' "
+                        f"(norm_max={crease_result.get('normalized_max_length', 0):.3f}, "
+                        f"lines={crease_result.get('line_count', 0)}, "
+                        f"holo={crease_result.get('is_likely_holo', False)})"
+                    )
+                else:
+                    logger.debug(
+                        f"[stage3e DRY-RUN] {_side} would upgrade crease: "
+                        f"'{cur_crease}' → '{ocv_crease}'"
+                    )
+            else:
+                logger.debug(
+                    f"[stage3e] {_side} crease unchanged: OpenCV='{ocv_crease}', "
+                    f"Vision='{cur_crease}'"
+                )
+    except Exception as exc:
+        logger.warning(f"[stage3e] Crease detection failed: {exc}")
 
     # Stage 2: Build centering result from both sides
     front_centering = front_analysis.get("centering") or {

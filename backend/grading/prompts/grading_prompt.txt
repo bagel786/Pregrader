@@ -120,10 +120,10 @@ Score rules:
 - Use only .0 or .5 increments (e.g., 7.0, 7.5, 8.0)
 - Confidence is your certainty about the score: 1.0 = fully certain, 0.5 = uncertain due to image quality
 - defects is an empty array [] if no defects are observed
-- Score to the evidence visible in the image. Choose the lower score only when a specific defect (corner rounding, edge chipping, surface scratch) is clearly locatable in the crop. Do not penalize for busy artwork, holographic patterns, image glare, or when crop quality makes fine detail hard to see.
+- Score to the evidence visible in the image. Choose the lower score only when a specific defect (corner rounding, edge chipping, surface scratch) is clearly locatable in the crop. Do not penalize for busy artwork or image glare, or when crop quality makes fine detail hard to see. However, creases, scratches, and whitening are always assessed even if they appear on holographic foil.
 
 Surface field guidance:
 - crease_depth: "none" = no crease visible; "hairline" = barely perceptible under raking light, surface not broken; "moderate" = visible under normal light, surface integrity partially compromised; "heavy" = obvious crease, surface broken or card bent. A wrinkle or fold that distorts the card surface must be classified as "heavy". A surface score of 5.0 or above requires crease_depth "hairline" or "none".
 - whitening_coverage: "none" = no surface stress whitening from print or handling; "minor" = less than 10% of surface area; "moderate" = 10–30% of surface area showing whitening; "extensive" = more than 30% of surface area.
 - gloss rating is orthogonal to scratch presence. A card can have original gloss intact yet still have visible scratches. Score "gloss" based solely on the reflective sheen of the surface, not surface texture or scratch presence.
-- crease_depth and whitening_coverage are optional fields. Omit them entirely or set to null if you cannot assess them reliably from the available image quality.
+- crease_depth and whitening_coverage are required fields. If you cannot assess them reliably from the available image quality, default to "none" — do not omit them or set to null.
