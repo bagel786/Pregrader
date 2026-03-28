@@ -16,10 +16,12 @@ import cv2
 
 logger = logging.getLogger(__name__)
 
-# Conservative thresholds (can be tuned down after empirical validation)
-THRESH_MINOR = 18.0  # below: definitely clean
-THRESH_MODERATE = 35.0  # below: minor wear only
-THRESH_EXTENSIVE = 55.0  # below: moderate wear; above: extensive
+# Thresholds (empirically calibrated from real card tests)
+# Score range observed: clean=5-15, minor_whitening=40-80, moderate=100+
+# Raised from initial conservative values (18/35/55) after first validation
+THRESH_MINOR = 40.0  # below: definitely clean
+THRESH_MODERATE = 100.0  # below: minor wear only
+THRESH_EXTENSIVE = 150.0  # below: moderate wear; above: extensive
 
 
 def detect_border_wear(image: np.ndarray) -> dict:
