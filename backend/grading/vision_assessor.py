@@ -20,6 +20,8 @@ import cv2
 import httpx
 import numpy as np
 
+from ..analysis.corners import CornerDetector
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -50,7 +52,9 @@ LOW_CONFIDENCE_THRESHOLD = 0.60
 
 # Composited image mode: send 6 composited images instead of 18 individual crops.
 # Set to False during calibration if the model struggles to identify corners in grids.
-COMPOSITE_MODE = True
+# CHANGED TO FALSE (Mar 28): Grid layout confused model into hallucinating identical corner scores.
+# Individual crops cost ~3x more tokens but eliminate hallucination risk and improve accuracy.
+COMPOSITE_MODE = False
 
 # Load system prompt once at module load time
 _PROMPT_PATH = Path(__file__).parent / "prompts" / "grading_prompt.txt"
@@ -63,6 +67,10 @@ except FileNotFoundError:
 
 class VisionAssessorError(Exception):
     """Raised when the Vision AI call fails unrecoverably."""
+
+
+class HallucinationError(VisionAssessorError):
+    """Raised when Vision AI returns hallucinated output (e.g., all identical corner scores)."""
 
 
 # ---------------------------------------------------------------------------
@@ -338,7 +346,7 @@ def _validate_response(data: Dict) -> None:
 
     # Guard 1: All 8 identical — strongest hallucination signal
     if len(set(corner_scores)) == 1:
-        raise ValueError(
+        raise HallucinationError(
             f"All 8 corner scores identical ({corner_scores[0]}) — Vision AI hallucinated output"
         )
 
@@ -346,7 +354,7 @@ def _validate_response(data: Dict) -> None:
     score_counts = Counter(corner_scores)
     most_common_score, count = score_counts.most_common(1)[0]
     if count >= 7:
-        raise ValueError(
+        raise HallucinationError(
             f"{count} of 8 corners have identical score ({most_common_score}) — "
             f"likely Vision AI hallucination. Full distribution: {dict(score_counts)}"
         )
@@ -410,6 +418,9 @@ def _call_api_sync(images: List[Dict], api_key: str) -> Dict:
             data = json.loads(raw_text)
             _validate_response(data)
             return data
+        except HallucinationError as exc:
+            # Don't retry on hallucination — will use fallback in assess_card instead
+            raise
         except (json.JSONDecodeError, ValueError, KeyError) as exc:
             last_exc = exc
             if retry < MAX_JSON_RETRIES:
@@ -692,6 +703,50 @@ def _collect_low_confidence_flags(merged: Dict) -> List[str]:
 
 
 # ---------------------------------------------------------------------------
+# Hallucination fallback: OpenCV corner detection
+# ---------------------------------------------------------------------------
+
+def _get_opencv_corners(
+    front_img: np.ndarray,
+    back_img: np.ndarray,
+) -> Dict:
+    """
+    Use OpenCV corner detection as fallback when Vision AI hallucinates.
+    Returns a dict with corner scores in Vision AI response format.
+    """
+    logger.warning("Using OpenCV corner detection as fallback for hallucinated Vision AI response")
+    detector = CornerDetector(debug=False)
+
+    front_corners_result = detector.analyze_corners(front_img, side="front")
+    back_corners_result = detector.analyze_corners(back_img, side="back")
+
+    # Convert OpenCV corner detection results to Vision AI response format
+    front_scores = front_corners_result.get("corners", {})
+    back_scores = back_corners_result.get("corners", {})
+
+    # Build corners dict in Vision AI format
+    corners = {}
+    for corner_name in ["top_left", "top_right", "bottom_left", "bottom_right"]:
+        corners[f"front_{corner_name}"] = {
+            "score": front_scores.get(corner_name, {}).get("score", 5.0),
+            "defects": [],
+            "confidence": front_corners_result.get("confidence", 0.5),
+        }
+        corners[f"back_{corner_name}"] = {
+            "score": back_scores.get(corner_name, {}).get("score", 5.0),
+            "defects": [],
+            "confidence": back_corners_result.get("confidence", 0.5),
+        }
+
+    return {
+        "corners": corners,
+        "edges": {},  # Will be filled by Vision AI in next attempt or left empty
+        "surface": {},  # Will be filled by Vision AI in next attempt or left empty
+        "_opencv_fallback": True,  # Mark this as fallback data
+    }
+
+
+# ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
 
@@ -726,19 +781,38 @@ def assess_card(
 
     images = prepare_images(front_img, back_img)
 
-    logger.info("Vision AI grading: starting pass 1")
-    pass1 = _call_api_sync(images, key)
+    try:
+        logger.info("Vision AI grading: starting pass 1")
+        pass1 = _call_api_sync(images, key)
+    except HallucinationError as exc:
+        logger.error(f"Vision AI hallucination on pass 1: {exc} — falling back to OpenCV corners")
+        fallback_corners = _get_opencv_corners(front_img, back_img)
+        merged = fallback_corners
+        merged["low_confidence_flags"] = _collect_low_confidence_flags(merged)
+        return merged
 
-    logger.info("Vision AI grading: starting pass 2")
-    pass2 = _call_api_sync(images, key)
+    try:
+        logger.info("Vision AI grading: starting pass 2")
+        pass2 = _call_api_sync(images, key)
+    except HallucinationError as exc:
+        logger.error(f"Vision AI hallucination on pass 2: {exc} — falling back to OpenCV corners")
+        fallback_corners = _get_opencv_corners(front_img, back_img)
+        merged = fallback_corners
+        merged["low_confidence_flags"] = _collect_low_confidence_flags(merged)
+        return merged
 
     max_diff = _max_score_disagreement(pass1, pass2)
     logger.info(f"Vision AI passes 1/2 max disagreement: {max_diff:.2f}")
 
     if max_diff > PASS_DISAGREEMENT_THRESHOLD:
         logger.info(f"Disagreement {max_diff:.2f} > {PASS_DISAGREEMENT_THRESHOLD} — running pass 3 for median")
-        pass3 = _call_api_sync(images, key)
-        merged = _median_of_three(pass1, pass2, pass3)
+        try:
+            pass3 = _call_api_sync(images, key)
+        except HallucinationError as exc:
+            logger.error(f"Vision AI hallucination on pass 3: {exc} — using passes 1 and 2 only")
+            merged = _average_passes(pass1, pass2)
+        else:
+            merged = _median_of_three(pass1, pass2, pass3)
     else:
         merged = _average_passes(pass1, pass2)
 
