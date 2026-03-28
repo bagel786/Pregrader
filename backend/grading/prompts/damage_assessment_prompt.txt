@@ -23,10 +23,12 @@ Analyze both sides for:
 For each side, assess:
 
 CREASE_DEPTH: Severity of visible creases/folds/wrinkles
+⚠️ CRITICAL: Creases can be subtle. Look closely at the entire card surface for ANY line, fold, or discontinuity. Even a faint line visible on the card = crease damage. Do NOT assume "none" without careful inspection.
+
 - "none": Absolutely no visible crease, fold, wrinkle, or distortion
-  Visual anchor: The card surface is completely flat; no lines, ridges, or distortions visible from any angle.
+  Visual anchor: The card surface is completely flat and smooth; NO lines, ridges, breaks, or discontinuities visible from any angle. The card must appear perfectly planar.
 - "hairline": Very faint crease barely visible, minimal surface impact
-  Visual anchor: A very faint surface stress mark only visible at glancing angles; the surface is not broken and the card geometry is undisturbed.
+  Visual anchor: A barely-visible line or stress mark that is only visible at certain angles or under close inspection. The break is there but extremely subtle (e.g., a faint line visible only when tilting the card).
 - "moderate": Clear crease visible with some surface distortion
   Visual anchor: A clearly visible crease line where the card was bent — obvious without magnification, but card edges are still relatively straight.
 - "heavy": OBVIOUS crease(s) - surface is visibly broken/bent/folded, card geometry clearly distorted
@@ -34,6 +36,21 @@ CREASE_DEPTH: Severity of visible creases/folds/wrinkles
 
 RULE: If the card shows ANY visible fold, crease line, or bent area → AT MINIMUM "hairline". If the crease is obvious and distorts the card → "heavy".
 Err on the side of severity.
+
+CRITICAL CREASE DETECTION:
+Look for ANY of these indicators, even subtle ones:
+- Visible line or discontinuity running across the card (vertical, horizontal, diagonal)
+- Slight color/shading change along a line (even if subtle, indicates a fold)
+- Asymmetry in how light reflects along an edge or interior
+- Any break in the card's surface continuity, no matter how faint
+- If you can see a line at all, classify as AT LEAST "hairline"
+- Vertical or horizontal lines running length/width of card = "moderate" minimum
+
+EXAMPLES (Moderate crease and above):
+- Vertical crease running from top to bottom edge (even if faint line is visible) → "moderate"
+- Horizontal fold across middle → "moderate"
+- Diagonal crease visible as a line → "moderate"
+- If a line is visible at ANY rotation angle → "moderate" minimum, unless extremely faint ("hairline")
 
 WHITENING_COVERAGE: Extent of visible whitening/wear (physical wear exposing white card stock)
 - "none": No whitening visible at all — edges and corners retain full ink/colour
