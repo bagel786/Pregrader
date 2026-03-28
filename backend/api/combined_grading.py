@@ -584,7 +584,7 @@ def combine_front_back_analysis(
     # Upgrade-only (never downgrades). Confidence deliberately 0.55 → below
     # 0.60 damage-cap gate, so this stage affects label display only.
     # Set STAGE_3D_ACTIVE = True after validating thresholds on real cards.
-    STAGE_3D_ACTIVE = False  # dry-run: logs only, does not modify grades
+    STAGE_3D_ACTIVE = True  # ACTIVE: OpenCV-based whitening detection enabled
     try:
         for _img, _side in [(front_img, "front"), (back_img, "back")]:
             if _img is None:
