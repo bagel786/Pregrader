@@ -643,15 +643,24 @@ def combine_front_back_analysis(
 
             if _CREASE_SEVERITY_ORDER.index(ocv_crease) > _CREASE_SEVERITY_ORDER.index(cur_crease):
                 if STAGE_3E_ACTIVE:
-                    vision_result["surface"][_side]["crease_depth"] = ocv_crease
+                    # Cap upgrade to at most 1 severity level above current baseline.
+                    # HoughLinesP can produce false positives on card textures/borders;
+                    # multi-level jumps (none→moderate, none→heavy) are unreliable.
+                    cur_idx = _CREASE_SEVERITY_ORDER.index(cur_crease)
+                    max_allowed_idx = min(cur_idx + 1, len(_CREASE_SEVERITY_ORDER) - 1)
+                    capped_crease = _CREASE_SEVERITY_ORDER[
+                        min(_CREASE_SEVERITY_ORDER.index(ocv_crease), max_allowed_idx)
+                    ]
+                    vision_result["surface"][_side]["crease_depth"] = capped_crease
                     # Floor confidence above damage-cap gate for moderate/heavy
-                    if ocv_crease in ("moderate", "heavy"):
+                    if capped_crease in ("moderate", "heavy"):
                         vision_result["surface"][_side]["confidence"] = max(
                             float(vision_result["surface"][_side].get("confidence", 0.0)),
                             0.65,
                         )
+                    cap_note = f" (capped from '{ocv_crease}')" if capped_crease != ocv_crease else ""
                     logger.info(
-                        f"[stage3e] {_side} crease upgraded: '{cur_crease}' → '{ocv_crease}' "
+                        f"[stage3e] {_side} crease upgraded: '{cur_crease}' → '{capped_crease}'{cap_note} "
                         f"(norm_max={crease_result.get('normalized_max_length', 0):.3f}, "
                         f"lines={crease_result.get('line_count', 0)}, "
                         f"holo={crease_result.get('is_likely_holo', False)})"

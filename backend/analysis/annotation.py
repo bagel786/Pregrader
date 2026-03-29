@@ -57,12 +57,17 @@ def annotate_card_image(
             logger.warning(f"Failed to load image: {image_path}")
             return None
 
-        annotated = img.copy()
         h, w = img.shape[:2]
 
         # Proportional sizing
         corner_radius = max(18, int(min(h, w) * 0.035))
-        corner_inset = max(12, int(min(h, w) * 0.02))
+        # Pad the image so corner circles sit entirely within bounds.
+        # Padding = corner_radius + a small gap so circles aren't clipped.
+        pad = corner_radius + 6
+        annotated = cv2.copyMakeBorder(img, pad, pad, pad, pad, cv2.BORDER_CONSTANT, value=(30, 30, 30))
+        h, w = annotated.shape[:2]
+
+        corner_inset = pad  # circle centre exactly at pad distance from edge
         edge_thick = max(6, int(min(h, w) * 0.012))
         edge_inset = corner_inset + corner_radius + 4
         label_font = cv2.FONT_HERSHEY_SIMPLEX
