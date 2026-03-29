@@ -697,8 +697,9 @@ def _collect_low_confidence_flags(merged: Dict) -> List[str]:
         if float(val.get("confidence", 1.0)) < LOW_CONFIDENCE_THRESHOLD:
             flags.append(f"edge_{key}")
     for side in ("front", "back"):
-        if float(merged["surface"][side].get("confidence", 1.0)) < LOW_CONFIDENCE_THRESHOLD:
-            flags.append(f"surface_{side}")
+        if side in merged.get("surface", {}):
+            if float(merged["surface"][side].get("confidence", 1.0)) < LOW_CONFIDENCE_THRESHOLD:
+                flags.append(f"surface_{side}")
     return flags
 
 
@@ -738,10 +739,30 @@ def _get_opencv_corners(
             "confidence": back_corners_result.get("confidence", 0.5),
         }
 
+    # Provide neutral defaults for edges and surface so downstream code doesn't crash.
+    # Confidence 0.4 is below the 0.60 damage-cap gate, so no cap is applied from fallback data.
+    _NEUTRAL_EDGE = {"score": 5.0, "defects": [], "confidence": 0.4}
+    edges = {
+        key: dict(_NEUTRAL_EDGE) for key in [
+            "front_top", "front_right", "front_bottom", "front_left",
+            "back_top",  "back_right",  "back_bottom",  "back_left",
+        ]
+    }
+    _NEUTRAL_SURFACE = {
+        "score": 5.0, "defects": [], "confidence": 0.4,
+        "crease_depth": "none", "whitening_coverage": "none",
+        "staining": "none", "gloss": "original gloss intact",
+        "print_registration": "normal",
+    }
+    surface = {
+        "front": dict(_NEUTRAL_SURFACE),
+        "back":  dict(_NEUTRAL_SURFACE),
+    }
+
     return {
         "corners": corners,
-        "edges": {},  # Will be filled by Vision AI in next attempt or left empty
-        "surface": {},  # Will be filled by Vision AI in next attempt or left empty
+        "edges": edges,
+        "surface": surface,
         "_opencv_fallback": True,  # Mark this as fallback data
     }
 
