@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:pregrader/screens/home_screen.dart';
-import 'package:pregrader/screens/camera_capture_screen.dart';
+import 'package:pregrader/screens/document_scan_capture_screen.dart';
 import 'package:pregrader/screens/disclaimer_screen.dart';
 import 'package:pregrader/screens/privacy_policy_screen.dart';
 
@@ -15,7 +15,7 @@ class AppRoutes {
 
   static Map<String, WidgetBuilder> get routes => {
     home: (context) => const HomeScreen(),
-    cameraCapture: (context) => const CameraCaptureScreen(),
+    cameraCapture: (context) => const DocumentScanCaptureScreen(),
     disclaimer: (context) => const DisclaimerScreen(),
     privacyPolicy: (context) => const PrivacyPolicyScreen(),
   };

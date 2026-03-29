@@ -36,7 +36,7 @@ dependencies:
   cupertino_icons: ^1.0.8
   image: ^4.7.2
   dio: ^5.0.0
-  camera: ^0.10.5
+  cunning_document_scanner: ^1.4.0
 
 dev_dependencies:
   flutter_test:

@@ -1,12 +1,11 @@
 import 'dart:io';
-import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import '../services/api_client.dart';
-import 'camera_capture_screen.dart';
+import 'document_scan_capture_screen.dart';
 import 'result_screen.dart';
 
 class ReviewScreen extends StatefulWidget {
-  final XFile frontImage;
+  final File frontImage;
 
   const ReviewScreen({super.key, required this.frontImage});
 
@@ -47,13 +46,13 @@ class _ReviewScreenState extends State<ReviewScreen> {
   @override
   void initState() {
     super.initState();
-    _frontFile = File(widget.frontImage.path);
+    _frontFile = widget.frontImage;
   }
 
   Future<void> _captureBack() async {
-    final result = await Navigator.of(context).push<XFile>(
+    final result = await Navigator.of(context).push<File>(
       MaterialPageRoute(
-        builder: (_) => const CameraCaptureScreen(isReturningResult: true),
+        builder: (_) => const DocumentScanCaptureScreen(isReturningResult: true),
       ),
     );
 

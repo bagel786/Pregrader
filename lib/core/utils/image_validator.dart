@@ -1,5 +1,4 @@
 import 'dart:io';
-import 'package:camera/camera.dart';
 import 'package:image/image.dart' as img;
 
 class ImageValidator {
@@ -11,9 +10,9 @@ class ImageValidator {
   ///   - `hasWarnings` (bool): true when cardDetected but framing could be improved (soft warnings)
   ///   - `warnings` (`List<String>`): soft advisory messages
   ///   - `issues` (`List<String>`): hard blocking issues
-  static Future<Map<String, dynamic>> validateImage(XFile imageFile) async {
+  static Future<Map<String, dynamic>> validateImage(File imageFile) async {
     try {
-      final bytes = await File(imageFile.path).readAsBytes();
+      final bytes = await imageFile.readAsBytes();
       final decoded = img.decodeImage(bytes);
 
       if (decoded == null) {
