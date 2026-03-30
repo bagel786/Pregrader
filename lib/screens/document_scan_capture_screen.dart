@@ -100,11 +100,34 @@ class _DocumentScanCaptureScreenState
         );
       }
     } catch (e) {
-      if (mounted) {
+      if (!mounted) return;
+      final msg = e.toString().toLowerCase();
+      final isPermission =
+          msg.contains('permission') || msg.contains('denied') || msg.contains('not granted');
+
+      if (isPermission) {
+        await showDialog<void>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('Camera Permission Required'),
+            content: const Text(
+              'Camera access was denied. Please enable it in Settings > Privacy & Security > Camera.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('OK'),
+              ),
+            ],
+          ),
+        );
+      } else {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Scan failed: $e')),
         );
       }
+
+      if (mounted) Navigator.of(context).pop();
     }
   }
 
