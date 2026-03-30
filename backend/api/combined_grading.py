@@ -506,7 +506,7 @@ def combine_front_back_analysis(
                     vision_result["surface"][side]["whitening_coverage"] = damage_whitening
                     logger.info(f"Damage assessment detected {side} whitening as '{damage_whitening}'")
 
-    except VisionAssessorError as exc:
+    except Exception as exc:
         logger.warning(f"Damage assessment failed (non-critical): {exc}")
         # Don't fail the entire grading, but log the issue
 
@@ -557,10 +557,12 @@ def combine_front_back_analysis(
                 max_allowed_idx = min(cur_idx + 1, len(_CREASE_SEVERITY_ORDER) - 1)
                 capped_crease = _CREASE_SEVERITY_ORDER[min(_CREASE_SEVERITY_ORDER.index(enh_crease), max_allowed_idx)]
                 vision_result["surface"][side]["crease_depth"] = capped_crease
-                # Floor confidence to ensure damage cap gate (0.60) is met
-                vision_result["surface"][side]["confidence"] = max(
-                    float(vision_result["surface"][side].get("confidence", 0.0)), 0.65
-                )
+                # Floor confidence above damage-cap gate for moderate/heavy only.
+                # Hairline has no damage cap, so flooring there is unnecessary.
+                if capped_crease in ("moderate", "heavy"):
+                    vision_result["surface"][side]["confidence"] = max(
+                        float(vision_result["surface"][side].get("confidence", 0.0)), 0.65
+                    )
                 if capped_crease != enh_crease:
                     logger.info(
                         f"[Stage 3c] Enhanced preprocessing upgraded {side} crease: "
@@ -609,6 +611,9 @@ def combine_front_back_analysis(
             if _WH_ORDER.index(ocv_white) > _WH_ORDER.index(cur_white):
                 if STAGE_3D_ACTIVE:
                     vision_result["surface"][_side]["whitening_coverage"] = ocv_white
+                    # Tag this upgrade so the damage cap knows it came from OpenCV (effective
+                    # confidence 0.55) and should not independently trigger the grade cap.
+                    vision_result["surface"][_side]["_stage3d_whitening"] = True
                     logger.info(
                         f"[stage3d] {_side} whitening upgraded: '{cur_white}' → '{ocv_white}' "
                         f"(score={ocv_score:.1f})"
@@ -656,7 +661,7 @@ def combine_front_back_analysis(
                     if capped_crease in ("moderate", "heavy"):
                         vision_result["surface"][_side]["confidence"] = max(
                             float(vision_result["surface"][_side].get("confidence", 0.0)),
-                            0.65,
+                            ocv_conf,
                         )
                     cap_note = f" (capped from '{ocv_crease}')" if capped_crease != ocv_crease else ""
                     logger.info(

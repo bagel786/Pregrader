@@ -2,7 +2,7 @@
 
 ## Memory Files
 
-- [audit_findings_2026_03.md](audit_findings_2026_03.md) — March 2026 comprehensive audit (7 rounds): 16 bugs fixed; WARN-NEW-1 (hallucination guard) + WARN-NEW-2 (isinstance guard) now resolved in code; LOGIC-6 (cap=2.0 docstring) still open; 7 remaining warnings (all non-grade-correctness); production-ready verdict maintained Round-7
+- [audit_findings_2026_03.md](audit_findings_2026_03.md) — March 2026 comprehensive audit (9 rounds): Prior Round-8 issues re-verified; damage prompt IS correctly sent as system prompt (prior concern was wrong); Stage 3c art box path IS live (prior concern was wrong); grading_prompt.txt IMAGE LAYOUT stale (still describes 6-image composite layout, COMPOSITE_MODE=False uses 20 images); Stage 3e consistency whitening ordering bug still open; _most_severe(None,None) still open; production-ready verdict maintained Round-9
 
 ## Documentation
 

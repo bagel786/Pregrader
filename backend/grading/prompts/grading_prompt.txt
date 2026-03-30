@@ -56,15 +56,17 @@ SURFACE SCORING CRITERIA
 
 IMAGE LAYOUT
 
-You will receive 6 images:
-1. Front corners grid (2×2): top-left corner is front_top_left, top-right is front_top_right, bottom-left is front_bottom_left, bottom-right is front_bottom_right.
-2. Back corners grid (2×2): same layout for the card's back side.
-3. Front edges composite: four edge strips labeled top, right, bottom, left.
-4. Back edges composite: same layout for the card's back side.
-5. Full front surface: the complete front of the card.
-6. Full back surface: the complete back of the card.
+You will receive 18 images in this exact order:
+Images 1–4:   Front corner crops  — top-left, top-right, bottom-left, bottom-right (one corner per image)
+Images 5–8:   Back corner crops   — top-left, top-right, bottom-left, bottom-right (one corner per image)
+Images 9–12:  Front edge strips   — top, right, bottom, left (one edge per image)
+Images 13–16: Back edge strips    — top, right, bottom, left (one edge per image)
+Image 17:     Full front surface
+Image 18:     Full back surface
 
-Assess each labeled region independently. Do not let the overall impression of one region bias your assessment of another.
+Each corner image shows ONLY that single corner. Each edge strip shows ONLY that single edge.
+Assess each image as a completely independent specimen. Do not interpolate from one image to
+infer the condition of a spatially adjacent region shown in a different image.
 
 ---
 

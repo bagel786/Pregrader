@@ -475,9 +475,9 @@ def _normalize_label(label: Optional[str], order: list) -> Optional[str]:
     if label in order:
         return label
     # Select synonym table based on which order list we're checking against
-    if order is _CREASE_ORDER:
+    if order == _CREASE_ORDER:
         synonyms = _CREASE_SYNONYMS
-    elif order is _WHITENING_ORDER:
+    elif order == _WHITENING_ORDER:
         synonyms = _WHITENING_SYNONYMS
     else:
         synonyms = {}
@@ -486,8 +486,10 @@ def _normalize_label(label: Optional[str], order: list) -> Optional[str]:
         logger.warning(f"Mapped non-standard damage label '{label}' → '{mapped}'")
         return mapped
     # Unknown label: default to most severe to avoid under-penalizing
-    logger.warning(
-        f"Unknown damage label '{label}' not in {order} — defaulting to most severe ('{order[-1]}')"
+    logger.error(
+        f"[DAMAGE CAP RISK] Unknown damage label {label!r} not in {order}. "
+        f"Escalating to most severe ('{order[-1]}'). If this triggers a damage cap, "
+        f"the grade may be incorrect. Check the Vision AI prompt for unexpected outputs."
     )
     return order[-1]
 

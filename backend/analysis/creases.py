@@ -165,11 +165,17 @@ def detect_surface_creases(
     norm_max = max_length / card_diagonal
     norm_total = total_length / card_diagonal
 
-    # 8b. False positive filter: too many short lines = printing texture, not creases
-    if line_count > MAX_LINE_COUNT_BEFORE_FALSE_POSITIVE:
+    # 8b. False positive filter: too many lines = likely printing texture, not creases.
+    # Only suppress when no single line is long enough to be a real crease
+    # (norm_max < THRESHOLD_HAIRLINE_MAX). If there is at least one dominant line
+    # (≥8% of card diagonal), it is very likely a genuine crease even amid
+    # surrounding texture noise, so we proceed to severity classification.
+    if line_count > MAX_LINE_COUNT_BEFORE_FALSE_POSITIVE and norm_max < THRESHOLD_HAIRLINE_MAX:
         logger.debug(
-            f"[creases/{side}] False positive filter: {line_count} lines detected (>{MAX_LINE_COUNT_BEFORE_FALSE_POSITIVE}), "
-            f"likely printing texture not creases → downgrading to 'none'"
+            f"[creases/{side}] False positive filter: {line_count} lines detected "
+            f"(>{MAX_LINE_COUNT_BEFORE_FALSE_POSITIVE}) with no dominant line "
+            f"(norm_max={norm_max:.3f} < {THRESHOLD_HAIRLINE_MAX}), "
+            f"likely printing texture → downgrading to 'none'"
         )
         return {
             "crease_detected": False,

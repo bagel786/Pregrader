@@ -236,7 +236,10 @@ def _apply_damage_cap(
                 cap = 5.0
                 reason = f"moderate crease on {side} surface"
 
-        if whitening and WHITENING_ORDER.get(whitening, 0) >= 3:  # extensive
+        # Stage 3d whitening upgrades are display-only (effective confidence 0.55).
+        # Skip the cap when Stage 3d was the sole source of the "extensive" label.
+        whitening_for_cap = "none" if data.get("_stage3d_whitening") else whitening
+        if whitening_for_cap and WHITENING_ORDER.get(whitening_for_cap, 0) >= 3:  # extensive
             if cap is None or cap > 5.0:
                 cap = 5.0
                 reason = f"extensive whitening on {side} surface"

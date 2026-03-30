@@ -52,7 +52,16 @@ def detect_border_wear(image: np.ndarray) -> dict:
         else:
             gray = image
 
+        # Step 1b: Normalise to a fixed analysis width so Sobel thresholds are
+        # resolution-independent. High-res captures (10MP+) produce proportionally
+        # smaller per-pixel gradients; without this, extensive whitening is
+        # suppressed on high-resolution inputs.
+        _TARGET_WIDTH = 800
         h, w = gray.shape
+        if w > _TARGET_WIDTH:
+            _scale = _TARGET_WIDTH / w
+            gray = cv2.resize(gray, (_TARGET_WIDTH, int(h * _scale)), interpolation=cv2.INTER_AREA)
+            h, w = gray.shape
 
         # Step 2: Build border mask (fixed 12% margin from edges)
         # Region outside inner box [(h*0.12, w*0.12) to (h*0.88, w*0.88)] is the border
