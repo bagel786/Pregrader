@@ -64,7 +64,7 @@ class _DocumentScanCaptureScreenState
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(ctx, false),
-                child: const Text('Retake'),
+                child: const Text('Go Back'),
               ),
               TextButton(
                 onPressed: () => Navigator.pop(ctx, true),
@@ -74,8 +74,7 @@ class _DocumentScanCaptureScreenState
           ),
         );
         if (shouldProceed != true) {
-          // Re-launch scanner for retake
-          _scan();
+          if (mounted) Navigator.of(context).pop();
           return;
         }
       } else if (hasWarnings) {

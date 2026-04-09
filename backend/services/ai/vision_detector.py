@@ -44,6 +44,54 @@ class VisionAIDetector:
             # Don't raise error, just log warning
             # This allows the module to import even without API key
     
+    def _prepare_image_for_api(self, image_path: str) -> tuple:
+        """Read and compress image to stay under the 5MB Claude API limit."""
+        _MAX_BYTES = 4 * 1024 * 1024  # 4MB — leave headroom below 5MB
+
+        with open(image_path, "rb") as f:
+            raw_bytes = f.read()
+
+        ext = Path(image_path).suffix.lower()
+        media_type = {
+            ".jpg": "image/jpeg",
+            ".jpeg": "image/jpeg",
+            ".png": "image/png",
+            ".webp": "image/webp",
+        }.get(ext, "image/jpeg")
+
+        if len(raw_bytes) <= _MAX_BYTES:
+            return raw_bytes, media_type
+
+        _logger.info(
+            f"Image is {len(raw_bytes) / 1024 / 1024:.1f} MB — compressing before API call"
+        )
+
+        img_array = np.frombuffer(raw_bytes, dtype=np.uint8)
+        img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+        if img is None:
+            return raw_bytes, media_type  # fall through; API will reject
+
+        # Try quality reduction first (preserves resolution)
+        for quality in (80, 65, 50):
+            _, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, quality])
+            if len(buf.tobytes()) <= _MAX_BYTES:
+                _logger.info(f"Compressed to {len(buf.tobytes()) / 1024:.0f} KB (quality={quality})")
+                return buf.tobytes(), "image/jpeg"
+
+        # If quality alone isn't enough, also downscale
+        h, w = img.shape[:2]
+        for scale in (0.75, 0.60, 0.50):
+            resized = cv2.resize(img, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
+            _, buf = cv2.imencode(".jpg", resized, [cv2.IMWRITE_JPEG_QUALITY, 65])
+            if len(buf.tobytes()) <= _MAX_BYTES:
+                _logger.info(
+                    f"Compressed to {len(buf.tobytes()) / 1024:.0f} KB (scale={scale}, quality=65)"
+                )
+                return buf.tobytes(), "image/jpeg"
+
+        # Last resort — return whatever we have (smallest version)
+        return buf.tobytes(), "image/jpeg"
+
     async def detect_card_with_llm(self, image_path: str) -> Dict:
         """
         Use Claude Vision to detect card in image
@@ -60,19 +108,10 @@ class VisionAIDetector:
         """
         if not self.api_key:
             raise ValueError("ANTHROPIC_API_KEY not set - cannot use Vision AI detection")
-        
-        # Encode image
-        with open(image_path, "rb") as f:
-            image_data = base64.standard_b64encode(f.read()).decode("utf-8")
-        
-        # Determine media type
-        ext = Path(image_path).suffix.lower()
-        media_type = {
-            ".jpg": "image/jpeg",
-            ".jpeg": "image/jpeg",
-            ".png": "image/png",
-            ".webp": "image/webp"
-        }.get(ext, "image/jpeg")
+
+        # Read and compress image to stay under 5MB Claude API limit
+        raw_bytes, media_type = self._prepare_image_for_api(image_path)
+        image_data = base64.standard_b64encode(raw_bytes).decode("utf-8")
         
         # Prepare prompt
         prompt = """Analyze this image and detect if there's a Pokemon trading card present.
